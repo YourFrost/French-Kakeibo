@@ -79,7 +79,13 @@ export function summary(st, y, m, now = new Date()) {
   const fixed = sum(fixedItems, i => i.amount);
   const fixedByCat = Object.fromEntries(Object.keys(FIXED_CATS).map(c => [c, sum(fixedItems.filter(f => (f.cat || 'indispensable') === c), f => f.amount)]));
   const plaisirByCat = {};
-  items.forEach(e => { if (e.type === 'plaisir') { const c = e.cat || 'autre'; plaisirByCat[c] = (plaisirByCat[c] || 0) + e.amount; } });
+  // Plaisirs regroupés par budget choisi (ancienne catégorie conservée pour les anciennes saisies).
+  const budgetName = id => (st.budgets || []).find(b => b.id === id)?.label;
+  items.forEach(e => {
+    if (e.type !== 'plaisir') return;
+    const c = budgetName(e.budget) || (e.cat ? catLabel(e.cat) : 'Sans budget');
+    plaisirByCat[c] = (plaisirByCat[c] || 0) + e.amount;
+  });
   const budgets = (st.budgets || []).map(b => ({ ...b, spent: sum(items.filter(e => e.budget === b.id), e => e.amount) }));
   const savings = sum(st.goals, g => goalMonthly(g, now));
   const budget = income - fixed - savings;      // budget "variable" du mois
@@ -158,7 +164,7 @@ export function insights(st, s) {
   const bsum = sum(s.budgets, b => b.amount);
   if (s.budget > 0 && bsum > s.budget) add('warn', `Tes budgets cumulés (${eur(bsum)}) dépassent ce que tu peux dépenser (${eur(s.budget)}). Revois-les à la baisse.`);
   const topCat = Object.entries(s.plaisirByCat).sort((a, b) => b[1] - a[1])[0];
-  if (topCat) add('info', `Ton premier poste de plaisir : ${catLabel(topCat[0]).toLowerCase()} (${eur(topCat[1])}, soit ${pct(topCat[1] / s.byType.plaisir)} de tes plaisirs).`);
+  if (topCat) add('info', `Ton premier poste de plaisir : ${topCat[0]} (${eur(topCat[1])}, soit ${pct(topCat[1] / s.byType.plaisir)} de tes plaisirs).`);
   if (s.fixedByCat.loisirs > 0) add('info', `Tes abonnements et activités de loisirs coûtent ${eur(s.fixedByCat.loisirs)} par mois, soit ${eur(s.fixedByCat.loisirs * 12)} par an.`);
   const curKey = iso(new Date()).slice(0, 7);
   const ending = st.fixed.filter(f => f.until && f.until >= curKey).sort((a, b) => a.until.localeCompare(b.until))[0];

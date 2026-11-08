@@ -1,5 +1,5 @@
 import * as S from './store.js';
-import { TYPES, TYPE_KEYS, FIXED_CATS, PLAISIR_CATS, FIXED_PRESETS, BUDGET_IDEAS, catLabel, fmtMonth, eur, iso, parseISO, summary, upcoming, insights, goalMonthly, monthsLeft } from './calc.js';
+import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, upcoming, insights, goalMonthly, monthsLeft } from './calc.js';
 import { ring, stackBar, bars, line, legend, kick } from './charts.js';
 import { openSheet, esc, toast } from './ui.js';
 
@@ -102,9 +102,8 @@ function openExpense(id) {
       { name: 'date', label: 'Date', type: 'date', value: e?.date || iso(now()), half: true },
     ],
     submitters: TYPE_KEYS.map(t => ({ value: t, label: TYPES[t].label, hint: TYPES[t].hint, cls: 'type' + (e?.type === t ? ' current' : ''), color: TYPES[t].color })),
-    followUp: type => type === 'plaisir' ? { prompt: 'Quel genre de plaisir ?', color: TYPES.plaisir.color, current: e?.cat, options: PLAISIR_CATS.map(c => ({ value: c.key, label: c.label })) } : null,
-    onSubmit: (v, type, cat) => {
-      const data = { amount: v.amount, label: v.label, date: v.date || iso(now()), type, cat: type === 'plaisir' ? cat : undefined, budget: v.budget || undefined };
+    onSubmit: (v, type) => {
+      const data = { amount: v.amount, label: v.label, date: v.date || iso(now()), type, cat: undefined, budget: v.budget || undefined };
       S.update(s => {
         if (e) Object.assign(s.expenses.find(x => x.id === id), data);
         else { const n = { id: S.uid(), ...data }; ui.lastId = n.id; s.expenses.push(n); }
@@ -112,7 +111,7 @@ function openExpense(id) {
       const ym = parseISO(data.date);
       ui.ym = { y: ym.getFullYear(), m: ym.getMonth() };
       render({ soft: true });
-      let msg = `${eur(data.amount)} · ${TYPES[type].label}${cat ? ' · ' + catLabel(cat) : ''} ajouté`;
+      let msg = `${eur(data.amount)} · ${TYPES[type].label} ajouté`;
       if (data.budget) {
         const b = summary(S.get(), ym.getFullYear(), ym.getMonth(), now()).budgets.find(x => x.id === data.budget);
         if (b && b.spent > b.amount) msg = `⚠️ Budget « ${b.label} » dépassé de ${eur(b.spent - b.amount)}`;
@@ -191,11 +190,12 @@ function fixedCatsCard(s) {
     <ul class="legend flat">${ks.map(k => `<li><i style="background:${FIXED_CATS[k].color}"></i><span>${FIXED_CATS[k].label}</span><b>${eur(s.fixedByCat[k])}</b></li>`).join('')}</ul></section>`;
 }
 function plaisirCard(s) {
-  const pc = PLAISIR_CATS.map(c => ({ ...c, v: s.plaisirByCat[c.key] || 0 })).filter(c => c.v > 0).sort((a, b) => b.v - a.v);
+  const pc = Object.entries(s.plaisirByCat).map(([label, v]) => ({ label, v })).filter(c => c.v > 0).sort((a, b) => b.v - a.v);
   if (!pc.length) return '';
-  return `<section class="card"><div class="card-h"><h3>Tes plaisirs par catégorie</h3><small>${eur(s.byType.plaisir)}</small></div>
-    ${pc.map((c, i) => `<div class="crow"><div class="crow-h"><span>${c.label}${i === 0 && pc.length > 1 ? ' <em class="rank">N°1</em>' : ''}</span><b>${eur(c.v)}</b><small>${Math.round(c.v / s.byType.plaisir * 100)} %</small></div>
-      <div class="pbar plais"><i data-p="${(c.v / pc[0].v * 100).toFixed(1)}%"></i></div></div>`).join('')}</section>`;
+  return `<section class="card"><div class="card-h"><h3>Tes plaisirs par budget</h3><small>${eur(s.byType.plaisir)}</small></div>
+    ${pc.map((c, i) => `<div class="crow"><div class="crow-h"><span>${esc(c.label)}${i === 0 && pc.length > 1 ? ' <em class="rank">N°1</em>' : ''}</span><b>${eur(c.v)}</b><small>${Math.round(c.v / s.byType.plaisir * 100)} %</small></div>
+      <div class="pbar plais"><i data-p="${(c.v / pc[0].v * 100).toFixed(1)}%"></i></div></div>`).join('')}
+    ${S.get().budgets.length ? '' : '<p class="help hint">Crée des budgets (Réglages) et rattache-les à tes dépenses pour voir où partent tes plaisirs.</p>'}</section>`;
 }
 function notes(list) {
   return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i></i><p>${n.text}</p></div>`).join('')}</div>`;
@@ -280,7 +280,7 @@ function journal() {
     <div class="chips">${chips}</div>
     ${items.length ? Object.entries(groups).map(([d, list]) => `<section class="day"><h4><span>${dayLabel(d)}</span><span>${eur(list.reduce((t, e) => t + e.amount, 0))}</span></h4>
       <div class="rows card">${list.map(e => `<button class="row${ui.lastId === e.id ? ' pop' : ''}" data-act="edit-expense" data-id="${e.id}">
-        <span class="dot" style="background:${TYPES[e.type].color}"></span><span class="grow"><b>${esc(e.label || TYPES[e.type].label)}</b><small>${TYPES[e.type].label}${e.cat ? ' · ' + catLabel(e.cat) : ''}${(S.get().budgets.find(b => b.id === e.budget) || {}).label ? ' · ' + esc(S.get().budgets.find(b => b.id === e.budget).label) : ''}</small></span><span class="amt">−${eur(e.amount)}</span></button>`).join('')}</div></section>`).join('')
+        <span class="dot" style="background:${TYPES[e.type].color}"></span><span class="grow"><b>${esc(e.label || TYPES[e.type].label)}</b><small>${TYPES[e.type].label}${(S.get().budgets.find(b => b.id === e.budget) || {}).label ? ' · ' + esc(S.get().budgets.find(b => b.id === e.budget).label) : ''}</small></span><span class="amt">−${eur(e.amount)}</span></button>`).join('')}</div></section>`).join('')
       : `<div class="empty"><div class="bubble">${ICON.journal}</div><p>Aucune dépense ${f === 'all' ? 'ce mois-ci' : 'dans cette catégorie'}.</p><small>Appuie sur + pour noter la première.</small></div>`}
   </div>`;
 }
