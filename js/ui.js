@@ -1,0 +1,95 @@
+// Feuille modale (bottom sheet) générique + toast.
+import { parseAmount } from './calc.js';
+
+const root = document.getElementById('sheet-root');
+const toastEl = document.getElementById('toast');
+
+export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let toastTimer;
+export function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+export function closeSheet() {
+  root.classList.remove('open');
+  setTimeout(() => { if (!root.classList.contains('open')) root.innerHTML = ''; }, 380);
+}
+
+function fieldHTML(f) {
+  const id = `f_${f.name}`;
+  const v = f.type === 'money' && f.value ? String(f.value).replace('.', ',') : (f.value ?? '');
+  const label = f.label ? `<label for="${id}">${f.label}${f.optional ? ' <em>optionnel</em>' : ''}</label>` : '';
+  let input;
+  if (f.type === 'money') {
+    input = `<div class="money"><input id="${id}" name="${f.name}" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(v)}"><span>€</span></div>`;
+  } else if (f.type === 'day') {
+    input = `<input id="${id}" name="${f.name}" type="number" inputmode="numeric" min="1" max="31" placeholder="${esc(f.placeholder || '')}" value="${esc(v)}">`;
+  } else {
+    input = `<input id="${id}" name="${f.name}" type="${f.type || 'text'}" autocomplete="off" placeholder="${esc(f.placeholder || '')}" value="${esc(v)}" ${f.list ? `list="${id}_l"` : ''}>`;
+  }
+  const list = f.list ? `<datalist id="${id}_l">${f.list.map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : '';
+  const sugg = f.suggestions ? `<div class="sugg">${f.suggestions.map(s => `<button type="button" class="pill" data-fill="${f.name}" data-v="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : '';
+  return `<div class="field${f.type === 'money' ? ' big' : ''}${f.half ? ' half' : ''}">${label}${input}${list}${f.help ? `<p class="help">${f.help}</p>` : ''}${sugg}</div>`;
+}
+
+/**
+ * cfg: { title, message?, fields[], submitters?[{label,value,cls,color}], noEnter?, onSubmit(values, submitterValue), onDelete? }
+ */
+export function openSheet(cfg) {
+  const subs = cfg.submitters || [{ label: cfg.submitLabel || 'Enregistrer', value: 'ok', cls: 'primary' }];
+  const typed = subs.length > 1;
+  root.innerHTML = `<div class="backdrop"></div>
+    <form class="sheet" novalidate>
+      <div class="grab"></div>
+      <h2>${cfg.title}</h2>
+      ${cfg.message ? `<p class="msg">${cfg.message}</p>` : ''}
+      <div class="fields">${(cfg.fields || []).map(fieldHTML).join('')}</div>
+      ${typed ? '<p class="pick">Quel type de dépense ?</p>' : ''}
+      <div class="actions${typed ? ' typed' : ''}">
+        ${subs.map(s => `<button type="submit" value="${s.value}" class="btn ${s.cls || 'primary'}" ${s.color ? `style="--c:${s.color}"` : ''}>${s.label}${s.hint ? `<small>${s.hint}</small>` : ''}</button>`).join('')}
+      </div>
+      ${cfg.onDelete ? '<button type="button" class="btn ghost danger" data-del>Supprimer</button>' : ''}
+    </form>`;
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('open')));
+
+  const form = root.querySelector('form');
+  const q = n => form.elements[n];
+  root.querySelector('.backdrop').onclick = closeSheet;
+  form.querySelectorAll('[data-fill]').forEach(b => b.onclick = () => { q(b.dataset.fill).value = b.dataset.v; q(b.dataset.fill).focus(); });
+  if (cfg.onDelete) form.querySelector('[data-del]').onclick = () => { cfg.onDelete(); closeSheet(); };
+  if (cfg.noEnter) form.addEventListener('keydown', e => { if (e.key === 'Enter') e.preventDefault(); });
+
+  let last = subs[0].value;
+  form.querySelectorAll('button[type=submit]').forEach(b => b.addEventListener('click', () => { last = b.value; }));
+
+  form.onsubmit = e => {
+    e.preventDefault();
+    const values = {};
+    let bad = null;
+    for (const f of cfg.fields || []) {
+      const raw = (q(f.name).value || '').trim();
+      let val = raw;
+      if (f.type === 'money') val = parseAmount(raw);
+      else if (f.type === 'day') val = raw ? Math.round(Number(raw)) : null;
+      const empty = f.type === 'money' ? !(val > 0) : (val === '' || val === null);
+      if (empty && !f.optional) bad = bad || f.name;
+      if (f.type === 'day' && val !== null && (val < 1 || val > 31)) bad = bad || f.name;
+      values[f.name] = f.optional && empty ? (f.type === 'money' ? 0 : f.type === 'day' ? null : '') : val;
+    }
+    if (bad) {
+      const el = q(bad).closest('.field');
+      el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+      q(bad).focus();
+      return;
+    }
+    if (cfg.onSubmit(values, last) !== false) closeSheet();
+  };
+
+  setTimeout(() => { const first = form.querySelector('input'); if (first && cfg.focus !== false) first.focus(); }, 380);
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && root.classList.contains('open')) closeSheet(); });
