@@ -9,6 +9,8 @@ Application de gestion de budget inspirée du **Kakeibo** japonais. PWA mobile :
 - **Plaisirs par budget** : le budget choisi sur une dépense plaisir sert de catégorie ; le Bilan montre quel poste pèse le plus.
 - **Calculs automatiques** : reste à vivre mensuel et par jour, épargne mensuelle nécessaire, répartition du revenu, notes et conseils.
 - **Saisie rapide** : bouton `+` → montant → un tap sur **Besoin**, **Plaisir** ou **Imprévu** enregistre la dépense.
+- **Prénom** demandé au premier lancement ; **anneau du reste du mois** qui inclut la part encore réservée aux budgets.
+- **Comparaisons** dans le Bilan : mois contre mois précédent (au même jour si le mois est en cours) et vue annuelle (mois par mois, moyenne, mois le plus dépensier, comparaison avec l'année précédente).
 - **Journal** par mois avec filtres, **Bilan** (anneau, rythme du mois, barres journalières, les 4 questions du Kakeibo), **Objectifs** avec versements.
 - Thème clair/sombre automatique, animations (respecte `prefers-reduced-motion`), export/import JSON.
 

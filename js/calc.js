@@ -91,6 +91,8 @@ export function summary(st, y, m, now = new Date()) {
   const budget = income - fixed - savings;      // budget "variable" du mois
   const spent = sum(TYPE_KEYS, t => byType[t]);
   const remaining = budget - spent;
+  const reserved = budgets.reduce((t, b) => t + Math.max(0, b.amount - b.spent), 0); // part des budgets pas encore consommée
+  const free = remaining - reserved;
   const dim = daysIn(y, m);
   const isCurrent = now.getFullYear() === y && now.getMonth() === m;
   const isPast = y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth());
@@ -104,7 +106,7 @@ export function summary(st, y, m, now = new Date()) {
   let acc = 0;
   const cumulative = daily.map(d => (acc += d.besoin + d.plaisir + d.imprevu));
 
-  return { y, m, items, byType, fixedByCat, plaisirByCat, budgets, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative };
+  return { y, m, items, byType, fixedByCat, plaisirByCat, budgets, reserved, free, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative };
 }
 
 /** Prochains événements (prélèvements / rentrées) sur ~30 jours. */

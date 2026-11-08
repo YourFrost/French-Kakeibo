@@ -65,6 +65,41 @@ export function line(cumulative, budget, day) {
   </svg>`;
 }
 
+/** 12 mois empilés par type + ligne du budget mensuel. months: [{besoin,plaisir,imprevu}] */
+export function yearBars(months, budget) {
+  const W = 300, H = 120, n = months.length, gap = 8, col = W / n, bw = col - gap;
+  const tot = months.map(m => m.besoin + m.plaisir + m.imprevu);
+  const max = Math.max(...tot, budget > 0 ? budget : 0, 1) * 1.06;
+  const g = months.map((m, i) => {
+    let y = H;
+    const rects = TYPE_KEYS.map(t => {
+      const h = m[t] / max * H;
+      if (!h) return '';
+      y -= h;
+      return `<rect x="${(i * col + gap / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${TYPES[t].color}"/>`;
+    }).join('');
+    const stub = tot[i] ? '' : `<rect x="${(i * col + gap / 2).toFixed(2)}" y="${H - 2}" width="${bw.toFixed(2)}" height="2" rx="1" fill="var(--line)"/>`;
+    return `<g class="bar" style="transition-delay:${i * 45}ms">${rects}${stub}</g>`;
+  }).join('');
+  const bl = budget > 0 ? `<line class="bline" x1="0" x2="${W}" y1="${(H - budget / max * H).toFixed(1)}" y2="${(H - budget / max * H).toFixed(1)}"/>` : '';
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${g}${bl}</svg>
+    <div class="axis year">${['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].map(l => `<span>${l}</span>`).join('')}</div>`;
+}
+
+/** Deux courbes cumulées superposées (mois affiché vs mois précédent). */
+export function compareLines(cur, prev) {
+  const W = 300, H = 120, n = Math.max(cur.length, prev.length, 2);
+  const max = Math.max(...cur, ...prev, 1) * 1.08;
+  const pt = (v, i) => `${(i / (n - 1) * W).toFixed(1)} ${(H - v / max * H).toFixed(1)}`;
+  const path = a => a.map((v, i) => `${i ? 'L' : 'M'}${pt(v, i)}`).join(' ');
+  const last = cur.length - 1;
+  return `<svg class="linechart" viewBox="0 0 ${W} ${H + 4}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${path(prev)}" class="draw prevline" pathLength="1" stroke="var(--muted)" fill="none"/>
+    ${cur.length ? `<path d="${path(cur)}" class="draw" pathLength="1" stroke="var(--accent)" fill="none"/>
+    <circle cx="${(last / (n - 1) * W).toFixed(1)}" cy="${(H - cur[last] / max * H).toFixed(1)}" r="3.6" fill="var(--accent)" class="dot"/>` : ''}
+  </svg>`;
+}
+
 export function legend(byType, total) {
   return `<ul class="legend">${TYPE_KEYS.map(t => `<li><i style="background:${TYPES[t].color}"></i><span>${TYPES[t].label}</span>
     <b>${eur(byType[t])}</b><small>${total ? Math.round(byType[t] / total * 100) : 0} %</small></li>`).join('')}</ul>`;

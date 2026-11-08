@@ -1,6 +1,6 @@
 // Stockage local (localStorage) — toutes les données restent sur l'appareil.
 const KEY = 'kakeibo.v1';
-const blank = () => ({ onboarded: false, incomes: [], fixed: [], budgets: [], goals: [], expenses: [] });
+const blank = () => ({ onboarded: false, name: '', incomes: [], fixed: [], budgets: [], goals: [], expenses: [] });
 
 function load() {
   try {

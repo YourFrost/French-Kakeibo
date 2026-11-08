@@ -1,6 +1,6 @@
 import * as S from './store.js';
 import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, upcoming, insights, goalMonthly, monthsLeft } from './calc.js';
-import { ring, stackBar, bars, line, legend, kick } from './charts.js';
+import { ring, stackBar, bars, line, legend, yearBars, compareLines, kick } from './charts.js';
 import { openSheet, esc, toast } from './ui.js';
 
 const view = document.getElementById('view');
@@ -8,7 +8,7 @@ const nav = document.getElementById('nav');
 const now = () => new Date();
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
-const ui = { tab: 'home', step: 0, filter: 'all', ym: { y: now().getFullYear(), m: now().getMonth() }, lastId: null };
+const ui = { bmode: 'month', year: now().getFullYear(), tab: 'home', step: 0, filter: 'all', ym: { y: now().getFullYear(), m: now().getMonth() }, lastId: null };
 
 /* ---------- Icônes ---------- */
 const P = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -204,7 +204,9 @@ function ringParts(s) {
   if (s.budget <= 0) return { parts: [{ v: s.spent > 0 ? 1 : 0 }], over: true };
   const over = s.remaining < 0;
   const scale = over ? 1 / (s.spent / s.budget) : 1;
-  return { over, parts: TYPE_KEYS.map(t => ({ v: s.byType[t] / s.budget * scale, color: TYPES[t].color })) };
+  const parts = TYPE_KEYS.map(t => ({ v: s.byType[t] / s.budget * scale, color: TYPES[t].color }));
+  if (!over && s.reserved > 0) parts.push({ v: s.reserved / s.budget, color: 'var(--reserve)' });
+  return { over, parts };
 }
 const monthNav = () => {
   const cur = ui.ym.y === now().getFullYear() && ui.ym.m === now().getMonth();
@@ -226,7 +228,8 @@ function onboarding() {
       <h1>Kakeibo</h1>
       <p class="lead">L’art japonais de tenir ses comptes, simplement. Chaque euro dépensé est un <b>besoin</b>, un <b>plaisir</b> ou un <b>imprévu</b>.</p>
       <ul class="pitch"><li><i style="background:var(--besoin)"></i>Dis-nous d’où vient ton argent</li><li><i style="background:var(--plaisir)"></i>Où il part chaque mois</li><li><i style="background:var(--imprevu)"></i>Et ce que tu veux construire</li></ul>
-      <div class="ob-foot"><button class="btn primary" data-act="ob-next">Commencer</button><small>Tes données restent sur ton téléphone.</small></div></div>`;
+      <div class="field name-field"><label for="name">Comment t’appelles-tu ?</label><input id="name" autocomplete="given-name" autocapitalize="words" maxlength="30" placeholder="Ton prénom" value="${esc(st.name)}"></div>
+      <div class="ob-foot"><button class="btn primary" data-act="ob-next" ${st.name ? '' : 'disabled'}>Commencer</button><small>Tes données restent sur ton téléphone.</small></div></div>`;
   }
   if (ui.step === 1) body = `<h1>Tes rentrées</h1><p class="lead">Salaire et autres revenus nets reçus chaque mois.</p>${listBlock('income', 'Rentrées d’argent', st.incomes, 'Ajoute ton salaire pour commencer.')}${next('Continuer', !st.incomes.length)}`;
   if (ui.step === 2) body = `<h1>Tes dépenses fixes</h1><p class="lead">Loyer, abonnements, assurances… avec leur date de prélèvement.</p>${listBlock('fixed', 'Dépenses fixes', st.fixed, 'Rien pour l’instant — tu peux passer cette étape.')}${next(st.fixed.length ? 'Continuer' : 'Passer')}`;
@@ -253,9 +256,10 @@ function home() {
   const up = upcoming(st, t, 5);
   const date = cap(new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(t));
   return `<div class="page stagger">
-    <header class="top"><div><small>${date}</small><h1>Bonjour 👋</h1></div><button class="icon-btn" data-act="tab" data-v="settings" aria-label="Réglages">${ICON.gear}</button></header>
+    <header class="top"><div><small>${date}</small><h1>Bonjour${st.name ? ' ' + esc(st.name) : ''} 👋</h1></div><button class="icon-btn" data-act="tab" data-v="settings" aria-label="Réglages">${ICON.gear}</button></header>
     <section class="card hero">
       ${ring(parts, { over, size: 232, stroke: 15, children: `<small>${s.remaining < 0 ? 'Dépassement' : 'Reste ce mois'}</small><div class="big ${s.remaining < 0 ? 'neg' : ''}" data-count="${Math.abs(s.remaining)}">${eur(0)}</div><small>sur ${eur(Math.max(0, s.budget))}</small>` })}
+      ${s.budgets.length && s.budget > 0 ? `<div class="ringkey"><span><i style="background:conic-gradient(var(--besoin) 0 33%, var(--plaisir) 0 66%, var(--imprevu) 0)"></i>Dépensé <b>${eur(s.spent)}</b></span><span><i style="background:var(--reserve)"></i>Budgets à venir <b>${eur(s.reserved)}</b></span><span><i class="free"></i>Libre <b>${eur(Math.max(0, s.free))}</b></span></div>` : ''}
       <p class="pace">${s.remaining > 0 ? `Tu peux dépenser <b>${eur(s.perDay)}</b> par jour · ${s.daysLeft} j restants` : s.budget <= 0 ? 'Revois tes charges ou tes objectifs dans les réglages.' : 'Budget du mois épuisé — seulement l’essentiel !'}</p>
     </section>
     <section class="types">${TYPE_KEYS.map(k => `<div class="tcard" style="--c:${TYPES[k].color}"><i></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
@@ -286,7 +290,7 @@ function journal() {
 }
 
 /* ---------- Bilan ---------- */
-function bilan() {
+function bilanMonth() {
   const st = S.get(), s = sumView();
   const tot = s.spent;
   const qs = [
@@ -298,8 +302,7 @@ function bilan() {
   const advice = !tot ? 'Note tes dépenses au fil de l’eau pour voir apparaître tes habitudes.'
     : s.remaining < 0 ? `Tu as dépassé ton budget de ${eur(-s.remaining)}. Le poste le plus lourd : ${TYPES[top].label.toLowerCase()} (${eur(s.byType[top])}). Fixe-toi un plafond pour le mois prochain.`
     : `Ton poste principal : ${TYPES[top].label.toLowerCase()} (${eur(s.byType[top])}). ${top === 'plaisir' ? 'Choisis les plaisirs qui comptent vraiment.' : top === 'imprevu' ? 'Alimente un fonds d’urgence pour amortir les surprises.' : 'Cherche si un besoin peut être optimisé.'}`;
-  return `<div class="page stagger">
-    <header class="top"><h1>Bilan</h1></header>${monthNav()}
+  return `${monthNav()}
     <section class="card"><div class="card-h"><h3>Répartition de ton revenu</h3></div>
       ${stackBar([{ v: s.fixed, color: 'var(--fixed)' }, { v: s.savings, color: 'var(--save)' }, { v: Math.max(0, s.budget), color: 'var(--accent)' }])}
       <ul class="legend flat"><li><i style="background:var(--fixed)"></i><span>Charges fixes</span><b>${eur(s.fixed)}</b></li><li><i style="background:var(--save)"></i><span>Épargne</span><b>${eur(s.savings)}</b></li><li><i style="background:var(--accent)"></i><span>À dépenser</span><b>${eur(Math.max(0, s.budget))}</b></li></ul></section>
@@ -313,11 +316,122 @@ function bilan() {
     <section class="card"><div class="card-h"><h3>Notes</h3></div>${notes(insights(st, s).slice(0, 5))}</section>
     <section class="card kk"><div class="card-h"><h3>Les 4 questions du Kakeibo</h3></div>
       ${qs.map(([q, a]) => `<div class="q"><span>${q}</span><b>${a}</b></div>`).join('')}
-      <div class="q last"><span>Comment puis-je m’améliorer ?</span><p>${advice}</p></div></section>
-  </div>`;
+      <div class="q last"><span>Comment puis-je m’améliorer ?</span><p>${advice}</p></div></section>`;
 }
 
 /* ---------- Objectifs ---------- */
+/* ---------- Bilan : modes Comparer & Année ---------- */
+const sum = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
+const mShort = (y, m) => new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(new Date(y, m, 1)).replace('.', '');
+const mLong = (y, m) => new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(y, m, 1));
+const deltaHTML = (a, b) => {
+  const d = a - b;
+  if (Math.abs(d) < 0.005) return '<span class="delta flat">=</span>';
+  const p = b ? ` (${d > 0 ? '+' : '−'}${Math.round(Math.abs(d) / b * 100)} %)` : '';
+  return `<span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : '−'}${eur(Math.abs(d))}${p}</span>`;
+};
+/** Dépenses d'un mois jusqu'au jour `limit` inclus (comparaison à périmètre égal). */
+function upTo(s, limit) {
+  const byType = { besoin: 0, plaisir: 0, imprevu: 0 }, byBudget = {};
+  s.items.forEach(e => {
+    if (parseISO(e.date).getDate() > limit) return;
+    byType[e.type] += e.amount;
+    if (e.budget) byBudget[e.budget] = (byBudget[e.budget] || 0) + e.amount;
+  });
+  return { byType, byBudget, total: sum(TYPE_KEYS, k => byType[k]) };
+}
+
+function bilanCompare() {
+  const st = S.get(), cur = sumView();
+  const pd = new Date(ui.ym.y, ui.ym.m - 1, 1);
+  const prev = summary(st, pd.getFullYear(), pd.getMonth(), now());
+  const limit = cur.isCurrent ? cur.day : cur.dim;
+  const A = upTo(cur, limit), B = upTo(prev, limit);
+  const cn = cap(mShort(cur.y, cur.m)), pn = cap(mShort(prev.y, prev.m));
+  if (!A.total && !B.total) return `${monthNav()}<div class="empty"><div class="bubble">${ICON.bilan}</div><p>Rien à comparer pour l’instant.</p><small>Il faut des dépenses sur ${cap(mLong(cur.y, cur.m))} ou ${mLong(prev.y, prev.m)}.</small></div>`;
+
+  const maxT = Math.max(...TYPE_KEYS.flatMap(k => [A.byType[k], B.byType[k]]), 1);
+  const w = v => `${(v / maxT * 100).toFixed(1)}%`;
+  const types = TYPE_KEYS.map(k => `<div class="cmp"><div class="cmp-h"><span><i class="cdot" style="background:${TYPES[k].color}"></i>${TYPES[k].label}</span>${deltaHTML(A.byType[k], B.byType[k])}</div>
+    <div class="cmp-b"><small>${cn}</small><div class="pbar"><i style="background:${TYPES[k].color}" data-p="${w(A.byType[k])}"></i></div><b>${eur(A.byType[k])}</b></div>
+    <div class="cmp-b prev"><small>${pn}</small><div class="pbar"><i style="background:${TYPES[k].color};opacity:.38" data-p="${w(B.byType[k])}"></i></div><b>${eur(B.byType[k])}</b></div></div>`).join('');
+
+  const bl = st.budgets.map(b => ({ b, a: A.byBudget[b.id] || 0, p: B.byBudget[b.id] || 0 })).filter(x => x.a || x.p);
+  const budgetsRows = bl.length ? `<section class="card"><div class="card-h"><h3>Par budget</h3></div><div class="rows">${bl.map(x =>
+    `<div class="row static"><span class="grow"><b>${esc(x.b.label)}</b><small>${pn} : ${eur(x.p)}</small></span><span class="mcol"><span class="amt">${eur(x.a)}</span>${deltaHTML(x.a, x.p)}</span></div>`).join('')}</div></section>` : '';
+
+  const curve = cur.cumulative.slice(0, Math.max(1, limit));
+  const notesList = [];
+  const dTot = A.total - B.total;
+  if (B.total === 0) notesList.push({ tone: 'info', text: `Pas de dépenses enregistrées en ${mLong(prev.y, prev.m)} : rien à comparer pour l’instant.` });
+  else {
+    notesList.push({ tone: dTot > B.total * 0.1 ? 'warn' : dTot < 0 ? 'good' : 'info', text: `${dTot > 0 ? 'Tu dépenses' : 'Tu dépenses'} ${eur(Math.abs(dTot))} ${dTot > 0 ? 'de plus' : 'de moins'} qu’en ${mLong(prev.y, prev.m)}${cur.isCurrent ? ' à la même date' : ''}.` });
+    const big = TYPE_KEYS.map(k => ({ k, d: A.byType[k] - B.byType[k] })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
+    if (Math.abs(big.d) > 0.5) notesList.push({ tone: big.d > 0 ? 'warn' : 'good', text: `Le poste qui a le plus bougé : ${TYPES[big.k].label.toLowerCase()} (${big.d > 0 ? '+' : '−'}${eur(Math.abs(big.d))}).` });
+  }
+  return `${monthNav()}
+    <section class="card cmp-total"><small>Dépensé en ${mLong(cur.y, cur.m)}${cur.isCurrent ? ` (jours 1 à ${limit})` : ''}</small>
+      <div class="big" data-count="${A.total}">${eur(0)}</div>
+      <p class="vs">${B.total ? `${deltaHTML(A.total, B.total)} <span>vs ${mLong(prev.y, prev.m)} : ${eur(B.total)}</span>` : `<span>Pas de données en ${mLong(prev.y, prev.m)}</span>`}</p></section>
+    <section class="card"><div class="card-h"><h3>Par type</h3></div>${types}</section>
+    ${budgetsRows}
+    <section class="card"><div class="card-h"><h3>Cumul des dépenses</h3><span class="key"><i class="k1"></i>${cn} <i class="k2"></i>${pn}</span></div>${compareLines(curve, prev.cumulative)}</section>
+    <section class="card"><div class="card-h"><h3>Notes</h3></div>${notes(notesList)}</section>`;
+}
+
+function bilanYear() {
+  const st = S.get(), y = ui.year, t = now();
+  const months = Array.from({ length: 12 }, (_, m) => summary(st, y, m, t));
+  const withData = months.filter(s => s.spent > 0);
+  const total = sum(months, s => s.spent);
+  const yearNav = `<div class="monthnav"><button data-act="year" data-d="-1" aria-label="Année précédente">${ICON.left}</button><b>${y}</b>
+    <button data-act="year" data-d="1" aria-label="Année suivante" ${y >= t.getFullYear() ? 'disabled' : ''}>${ICON.right}</button></div>`;
+  if (!total) return `${yearNav}<div class="empty"><div class="bubble">${ICON.bilan}</div><p>Aucune dépense en ${y}.</p><small>Les mois se remplissent au fil de tes saisies.</small></div>`;
+
+  const limit = y === t.getFullYear() ? t.getMonth() : 11;
+  const prevTotal = sum(Array.from({ length: limit + 1 }, (_, m) => summary(st, y - 1, m, t)), s => s.spent);
+  const done = withData.filter(s => !s.isCurrent);           // mois terminés (le mois en cours est partiel)
+  const avg = done.length ? sum(done, s => s.spent) / done.length : total;
+  const byType = Object.fromEntries(TYPE_KEYS.map(k => [k, sum(months, s => s.byType[k])]));
+  const worst = done.slice().sort((a, b) => b.spent - a.spent)[0];
+  const best = done.slice().sort((a, b) => a.spent - b.spent)[0];
+  const over = done.filter(s => s.budget > 0 && s.remaining < 0).length;
+  const maxM = Math.max(...months.map(s => s.spent), 1);
+  const budget = months[0].budget;
+
+  const shown = months.filter(s => s.isPast || s.isCurrent);
+  const list = shown.map(s => {
+    const p = s.m > 0 ? months[s.m - 1].spent : 0;
+    return `<button class="row" data-act="goto-month" data-m="${s.m}"><span class="grow"><b>${cap(mLong(y, s.m))}</b><div class="pbar thin"><i data-p="${(s.spent / maxM * 100).toFixed(1)}%"></i></div></span>
+      <span class="mcol"><span class="amt">${s.spent ? eur(s.spent) : '—'}</span>${s.isCurrent ? '<small>en cours</small>' : s.spent && p ? deltaHTML(s.spent, p) : ''}</span></button>`;
+  }).join('');
+
+  const nl = [{ tone: 'info', text: `Tu as dépensé ${eur(total)} en ${y}${done.length ? `, soit ${eur(avg)} en moyenne sur les ${done.length} mois terminés` : ''}.` }];
+  if (done.length > 1) {
+    nl.push({ tone: 'warn', text: `Mois le plus dépensier : ${mLong(y, worst.m)} (${eur(worst.spent)}).` });
+    nl.push({ tone: 'good', text: `Mois le plus sobre : ${mLong(y, best.m)} (${eur(best.spent)}).` });
+  }
+  if (budget > 0 && done.length) nl.push(over ? { tone: 'warn', text: `Tu as dépassé ton budget ${over} mois sur ${done.length}.` } : { tone: 'good', text: 'Budget respecté tous les mois. Bravo !' });
+  if (prevTotal > 0) nl.push({ tone: total > prevTotal ? 'warn' : 'good', text: `${total > prevTotal ? 'Tu dépenses davantage' : 'Tu dépenses moins'} qu’en ${y - 1} sur la même période (${eur(Math.abs(total - prevTotal))} d’écart).` });
+
+  return `${yearNav}
+    <section class="card cmp-total"><small>Dépensé en ${y}</small><div class="big" data-count="${total}">${eur(0)}</div>
+      <p class="vs"><span>${eur(avg)} / mois en moyenne${done.length ? ' (mois terminés)' : ''}</span></p>
+      ${prevTotal > 0 ? `<p class="vs">${deltaHTML(total, prevTotal)} <span>vs ${y - 1} (même période)</span></p>` : ''}</section>
+    <section class="card"><div class="card-h"><h3>Mois par mois</h3>${budget > 0 ? '<span class="key"><i class="k2"></i>Budget</span>' : ''}</div>
+      ${yearBars(months.map(s => s.byType), budget)}</section>
+    <section class="card"><div class="card-h"><h3>Répartition sur l’année</h3></div>${stackBar(TYPE_KEYS.map(k => ({ v: byType[k], color: TYPES[k].color })))}<div style="height:14px"></div>${legend(byType, total)}</section>
+    <section class="card"><div class="card-h"><h3>Détail par mois</h3><small>Touche pour ouvrir</small></div><div class="rows">${list}</div></section>
+    <section class="card"><div class="card-h"><h3>Notes</h3></div>${notes(nl)}</section>`;
+}
+
+function bilan() {
+  const modes = [['month', 'Mois'], ['compare', 'Comparer'], ['year', 'Année']];
+  const body = ui.bmode === 'compare' ? bilanCompare() : ui.bmode === 'year' ? bilanYear() : bilanMonth();
+  return `<div class="page stagger"><header class="top"><h1>Bilan</h1></header>
+    <div class="seg">${modes.map(([k, l]) => `<button class="${ui.bmode === k ? 'on' : ''}" data-act="bmode" data-v="${k}">${l}</button>`).join('')}</div>${body}</div>`;
+}
+
 function goals() {
   const st = S.get(), t = now();
   const total = st.goals.reduce((a, g) => a + goalMonthly(g, t), 0);
@@ -341,6 +455,7 @@ function settings() {
   return `<div class="page stagger">
     <header class="top"><button class="back" data-act="tab" data-v="home" aria-label="Retour">${ICON.left}</button><h1>Réglages</h1><span></span></header>
     <p class="lead tight">Ta situation. Les calculs se mettent à jour automatiquement.</p>
+    <section class="card"><div class="card-h"><h3>Profil</h3></div><div class="rows"><button class="row" data-act="edit-name"><span class="grow"><b>Prénom</b><small>${esc(st.name || 'Non renseigné')}</small></span><span class="link">Modifier</span></button></div></section>
     ${listBlock('income', 'Rentrées d’argent', st.incomes, 'Aucune rentrée.')}
     ${listBlock('fixed', 'Dépenses fixes', st.fixed, 'Aucune dépense fixe.')}
     ${listBlock('budget', 'Budgets mensuels', st.budgets, 'Aucun budget.')}
@@ -395,6 +510,13 @@ const ACTIONS = {
     render();
   },
   filter: a => { ui.filter = a.dataset.v; render({ soft: true }); },
+  bmode: a => { ui.bmode = a.dataset.v; render(); },
+  year: a => { ui.year = Math.min(now().getFullYear(), ui.year + Number(a.dataset.d)); render(); },
+  'goto-month': a => { ui.ym = { y: ui.year, m: Number(a.dataset.m) }; ui.bmode = 'month'; render(); },
+  'edit-name': () => openSheet({
+    title: 'Ton prénom', fields: [{ name: 'firstname', label: 'Prénom', value: S.get().name, placeholder: 'Ton prénom' }],
+    onSubmit: v => { S.update(st => { st.name = v.firstname; }); render({ soft: true }); },
+  }),
   'ob-next': () => { ui.step++; render(); },
   'ob-back': () => { ui.step--; render(); },
   'ob-finish': () => { S.update(st => { st.onboarded = true; }); ui.tab = 'home'; render(); },
@@ -427,6 +549,17 @@ document.addEventListener('change', e => {
       S.replace({ ...d, onboarded: true }); render(); toast('Sauvegarde importée');
     } catch { toast('Fichier invalide'); }
   });
+});
+
+document.addEventListener('input', e => {
+  if (e.target.id !== 'name') return;
+  const v = e.target.value.trim();
+  S.update(st => { st.name = v; });
+  const b = document.querySelector('[data-act=ob-next]');
+  if (b) b.disabled = !v;
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'name' && e.target.value.trim()) { e.preventDefault(); e.target.blur(); ACTIONS['ob-next'](); }
 });
 
 render();
