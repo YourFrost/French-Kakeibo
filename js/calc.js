@@ -6,6 +6,37 @@ export const TYPES = {
 };
 export const TYPE_KEYS = Object.keys(TYPES);
 
+export const FIXED_CATS = {
+  indispensable: { label: 'Indispensable', color: 'var(--besoin)' },
+  loisirs:       { label: 'Loisirs',       color: 'var(--plaisir)' },
+  temporaire:    { label: 'Temporaire',    color: 'var(--imprevu)' },
+};
+export const PLAISIR_CATS = [
+  { key: 'sorties', label: 'Sorties & restos' }, { key: 'shopping', label: 'Shopping' },
+  { key: 'culture', label: 'Culture & loisirs' }, { key: 'sport', label: 'Sport & bien-être' },
+  { key: 'moto', label: 'Moto & auto' }, { key: 'tech', label: 'High-tech & jeux' },
+  { key: 'voyage', label: 'Voyages' }, { key: 'cadeaux', label: 'Cadeaux' }, { key: 'autre', label: 'Autre' },
+];
+export const catLabel = k => (PLAISIR_CATS.find(c => c.key === k) || { label: 'Autre' }).label;
+
+/** Catalogue de charges courantes : { label, cat } → pré-remplit le formulaire. */
+const I = 'indispensable', L = 'loisirs', T = 'temporaire';
+export const FIXED_PRESETS = [
+  { name: 'Divertissement', items: [['Netflix', L], ['Spotify', L], ['Disney+', L], ['Prime Video', L], ['Canal+', L], ['YouTube Premium', L], ['Abonnement jeux vidéo', L], ['Presse / magazine', L]] },
+  { name: 'Activité', items: [['Salle de sport', L], ['Club de sport', L], ['Cours (musique, danse…)', L], ['Piscine', L], ['Activité enfants', L]] },
+  { name: 'Logement', items: [['Loyer', I], ['Électricité', I], ['Gaz', I], ['Eau', I], ['Box internet', I], ['Assurance habitation', I], ['Charges de copropriété', I]] },
+  { name: 'Transport', items: [['Assurance moto', I], ['Assurance auto', I], ['Abonnement transports', I], ['Crédit auto / moto', T], ['Parking / garage', I]] },
+  { name: 'Numérique', items: [['Forfait mobile', I], ['Stockage cloud', L], ['Logiciel / application', L], ['Box repas / coffret', L]] },
+  { name: 'Santé', items: [['Mutuelle', I], ['Assurance prévoyance', I], ['Abonnement bien-être', L]] },
+  { name: 'Finances', items: [['Crédit conso', T], ['Remboursement de dette', T], ['Frais bancaires', I], ['Impôts', I], ['Don / association', L]] },
+  { name: 'Famille', items: [['Garde d’enfants', I], ['Cantine / école', I], ['Pension alimentaire', I], ['Argent de poche', L]] },
+].map(g => ({ name: g.name, items: g.items.map(([label, cat]) => ({ label, cat })) }));
+export const BUDGET_IDEAS = ['Courses', 'Transport', 'Carburant', 'Restaurants', 'Moto', 'Santé', 'Vêtements', 'Sorties', 'Cadeaux', 'Animaux'];
+
+export const fmtMonth = ym => new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(parseISO(ym + '-01'));
+/** Charges fixes actives pour le mois `key` (YYYY-MM) : une charge temporaire s'arrête après son dernier mois. */
+export const activeFixed = (st, key) => st.fixed.filter(f => !f.until || f.until >= key);
+
 const pad = n => String(n).padStart(2, '0');
 export const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const parseISO = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -44,7 +75,12 @@ export function summary(st, y, m, now = new Date()) {
   const items = st.expenses.filter(e => e.date.startsWith(key));
   const byType = Object.fromEntries(TYPE_KEYS.map(t => [t, sum(items.filter(e => e.type === t), e => e.amount)]));
   const income = sum(st.incomes, i => i.amount);
-  const fixed = sum(st.fixed, i => i.amount);
+  const fixedItems = activeFixed(st, key);
+  const fixed = sum(fixedItems, i => i.amount);
+  const fixedByCat = Object.fromEntries(Object.keys(FIXED_CATS).map(c => [c, sum(fixedItems.filter(f => (f.cat || 'indispensable') === c), f => f.amount)]));
+  const plaisirByCat = {};
+  items.forEach(e => { if (e.type === 'plaisir') { const c = e.cat || 'autre'; plaisirByCat[c] = (plaisirByCat[c] || 0) + e.amount; } });
+  const budgets = (st.budgets || []).map(b => ({ ...b, spent: sum(items.filter(e => e.budget === b.id), e => e.amount) }));
   const savings = sum(st.goals, g => goalMonthly(g, now));
   const budget = income - fixed - savings;      // budget "variable" du mois
   const spent = sum(TYPE_KEYS, t => byType[t]);
@@ -62,7 +98,7 @@ export function summary(st, y, m, now = new Date()) {
   let acc = 0;
   const cumulative = daily.map(d => (acc += d.besoin + d.plaisir + d.imprevu));
 
-  return { y, m, items, byType, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative };
+  return { y, m, items, byType, fixedByCat, plaisirByCat, budgets, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative };
 }
 
 /** Prochains événements (prélèvements / rentrées) sur ~30 jours. */
@@ -77,7 +113,7 @@ export function upcoming(st, now = new Date(), limit = 6) {
     ...st.fixed.filter(f => f.day).map(f => ({ kind: 'fixed', ...f })),
     ...st.incomes.filter(f => f.day).map(f => ({ kind: 'income', ...f })),
   ].map(e => { const date = next(e); return { ...e, date, inDays: Math.round((date - today) / 864e5) }; });
-  return evs.sort((a, b) => a.date - b.date).slice(0, limit);
+  return evs.filter(e => e.kind !== 'fixed' || !e.until || e.until >= `${e.date.getFullYear()}-${pad(e.date.getMonth() + 1)}`).sort((a, b) => a.date - b.date).slice(0, limit);
 }
 
 /** Notes et conseils — { tone: good | warn | info, text }. */
@@ -114,5 +150,19 @@ export function insights(st, s) {
     if (s.spent > 0 && s.byType.plaisir / s.spent > 0.4) add('warn', `Les plaisirs représentent ${pct(s.byType.plaisir / s.spent)} de tes dépenses du mois. Pas de culpabilité, mais garde un œil dessus.`);
     if (s.byType.imprevu > 0) add('info', `${eur(s.byType.imprevu)} d’imprévus ce mois-ci. Un matelas de sécurité t’évite de puiser dans tes objectifs.`);
   }
-  return out;
+  for (const b of s.budgets) {
+    const r = b.spent / b.amount;
+    if (r > 1) add('warn', `Budget « ${b.label} » dépassé de ${eur(b.spent - b.amount)}.`);
+    else if (r >= 0.8 && s.isCurrent) add('warn', `Budget « ${b.label} » consommé à ${pct(r)} : il te reste ${eur(b.amount - b.spent)}.`);
+  }
+  const bsum = sum(s.budgets, b => b.amount);
+  if (s.budget > 0 && bsum > s.budget) add('warn', `Tes budgets cumulés (${eur(bsum)}) dépassent ce que tu peux dépenser (${eur(s.budget)}). Revois-les à la baisse.`);
+  const topCat = Object.entries(s.plaisirByCat).sort((a, b) => b[1] - a[1])[0];
+  if (topCat) add('info', `Ton premier poste de plaisir : ${catLabel(topCat[0]).toLowerCase()} (${eur(topCat[1])}, soit ${pct(topCat[1] / s.byType.plaisir)} de tes plaisirs).`);
+  if (s.fixedByCat.loisirs > 0) add('info', `Tes abonnements et activités de loisirs coûtent ${eur(s.fixedByCat.loisirs)} par mois, soit ${eur(s.fixedByCat.loisirs * 12)} par an.`);
+  const curKey = iso(new Date()).slice(0, 7);
+  const ending = st.fixed.filter(f => f.until && f.until >= curKey).sort((a, b) => a.until.localeCompare(b.until))[0];
+  if (ending) add('info', `Dès la fin de « ${ending.label} » (${fmtMonth(ending.until)}), tu récupères ${eur(ending.amount)} par mois.`);
+  const ORDER = { warn: 0, good: 1, info: 2 };
+  return out.sort((a, b) => ORDER[a.tone] - ORDER[b.tone]);
 }
