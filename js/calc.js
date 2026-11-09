@@ -69,44 +69,106 @@ export function goalMonthly(g, now) {
 
 const sum = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
 
-/** Synthèse d'un mois (y, m 0-11). */
+/* ---------- Périodes (mois civil ou « mois de paie ») ---------- */
+export const periodKey = (y, m) => `${y}-${pad(m + 1)}`;
+/** Période à laquelle appartient `now`. Avec un jour de début > 1, la période est nommée d'après son mois de FIN. */
+export function curYM(startDay = 1, now = new Date()) {
+  let y = now.getFullYear(), m = now.getMonth();
+  if (startDay > 1 && now.getDate() >= startDay) { m++; if (m > 11) { m = 0; y++; } }
+  return { y, m };
+}
+export const periodOfDate = (d, startDay = 1) => curYM(startDay, d);
+export function periodRange(y, m, startDay = 1) {
+  if (startDay <= 1) return { start: new Date(y, m, 1), end: new Date(y, m + 1, 0) };
+  return { start: new Date(y, m - 1, startDay), end: new Date(y, m, startDay - 1) };
+}
+/** Date de prélèvement d'une charge (jour du mois) dans la période, ou null. */
+function debitDate(day, start, end) {
+  for (const base of [start, end]) {
+    const d = new Date(base.getFullYear(), base.getMonth(), Math.min(day, daysIn(base.getFullYear(), base.getMonth())));
+    if (d >= start && d <= end) return d;
+  }
+  return null;
+}
+
+/** Photo de la situation (revenus, charges, budgets, épargne) pour figer l'historique. */
+export function capture(st, now = new Date()) {
+  return {
+    incomes: st.incomes.map(x => ({ ...x })), fixed: st.fixed.map(x => ({ ...x })), budgets: (st.budgets || []).map(x => ({ ...x })),
+    savings: st.goals.reduce((t, g) => t + goalMonthly(g, now), 0),
+  };
+}
+/** Situation applicable à une période : photo figée si elle existe, sinon la plus proche connue. */
+function situation(st, key, now) {
+  const snaps = st.snapshots || {};
+  if (snaps[key]) return snaps[key];
+  const c = curYM(st.startDay || 1, now);
+  if (key < periodKey(c.y, c.m)) {
+    const later = Object.keys(snaps).filter(k => k > key).sort()[0];
+    if (later) return snaps[later];
+  }
+  return capture(st, now);
+}
+
+/** Synthèse d'une période (y, m = mois de fin, 0-11). */
 export function summary(st, y, m, now = new Date()) {
-  const key = `${y}-${pad(m + 1)}`;
-  const items = st.expenses.filter(e => e.date.startsWith(key));
+  const key = periodKey(y, m);
+  const { start, end } = periodRange(y, m, st.startDay || 1);
+  const sIso = iso(start), eIso = iso(end);
+  const items = st.expenses.filter(e => e.date >= sIso && e.date <= eIso);
+  const sit = situation(st, key, now);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
   const byType = Object.fromEntries(TYPE_KEYS.map(t => [t, sum(items.filter(e => e.type === t), e => e.amount)]));
-  const income = sum(st.incomes, i => i.amount);
-  const fixedItems = activeFixed(st, key);
+  const income = sum(sit.incomes, i => i.amount);
+  const fixedItems = sit.fixed.filter(f => !f.until || f.until >= key);
   const fixed = sum(fixedItems, i => i.amount);
   const fixedByCat = Object.fromEntries(Object.keys(FIXED_CATS).map(c => [c, sum(fixedItems.filter(f => (f.cat || 'indispensable') === c), f => f.amount)]));
   const plaisirByCat = {};
   // Plaisirs regroupés par budget choisi (ancienne catégorie conservée pour les anciennes saisies).
-  const budgetName = id => (st.budgets || []).find(b => b.id === id)?.label;
+  const budgetName = id => (sit.budgets.find(b => b.id === id) || (st.budgets || []).find(b => b.id === id))?.label;
   items.forEach(e => {
     if (e.type !== 'plaisir') return;
     const c = budgetName(e.budget) || (e.cat ? catLabel(e.cat) : 'Sans budget');
     plaisirByCat[c] = (plaisirByCat[c] || 0) + e.amount;
   });
-  const budgets = (st.budgets || []).map(b => ({ ...b, spent: sum(items.filter(e => e.budget === b.id), e => e.amount) }));
-  const savings = sum(st.goals, g => goalMonthly(g, now));
-  const budget = income - fixed - savings;      // budget "variable" du mois
+  const budgets = sit.budgets.map(b => ({ ...b, spent: sum(items.filter(e => e.budget === b.id), e => e.amount) }));
+  const savings = sit.savings;
+
+  // Report du mois précédent (fin de mois)
+  const pv = new Date(y, m - 1, 1);
+  const prevClosure = (st.closures || {})[periodKey(pv.getFullYear(), pv.getMonth())];
+  const carryIn = prevClosure ? sum(prevClosure.allocations.filter(a => a.to === 'carry'), a => a.amount) : 0;
+
+  const budget = income - fixed - savings + carryIn;      // budget "variable" de la période
   const spent = sum(TYPE_KEYS, t => byType[t]);
   const remaining = budget - spent;
   const reserved = budgets.reduce((t, b) => t + Math.max(0, b.amount - b.spent), 0); // part des budgets pas encore consommée
   const free = remaining - reserved;
-  const dim = daysIn(y, m);
-  const isCurrent = now.getFullYear() === y && now.getMonth() === m;
-  const isPast = y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth());
-  const day = isCurrent ? now.getDate() : isPast ? dim : 0;
+  const dim = Math.round((end - start) / 864e5) + 1;
+  const isCurrent = today >= start && today <= end;
+  const isPast = end < today;
+  const day = isCurrent ? Math.round((today - start) / 864e5) + 1 : isPast ? dim : 0;
   const daysLeft = isCurrent ? dim - day + 1 : 0;
   const perDay = daysLeft && remaining > 0 ? remaining / daysLeft : 0;
   const expected = budget > 0 ? (budget * day) / dim : 0;
 
   const daily = Array.from({ length: dim }, () => ({ besoin: 0, plaisir: 0, imprevu: 0 }));
-  items.forEach(e => { daily[parseISO(e.date).getDate() - 1][e.type] += e.amount; });
+  items.forEach(e => { daily[Math.round((parseISO(e.date) - start) / 864e5)][e.type] += e.amount; });
   let acc = 0;
   const cumulative = daily.map(d => (acc += d.besoin + d.plaisir + d.imprevu));
 
-  return { y, m, items, byType, fixedByCat, plaisirByCat, budgets, reserved, free, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative };
+  // Prélèvements et rentrées datés de la période
+  const debits = [
+    ...fixedItems.filter(f => f.day).map(f => ({ kind: 'fixed', id: f.id, label: f.label, amount: f.amount, date: debitDate(f.day, start, end) })),
+    ...sit.incomes.filter(f => f.day).map(f => ({ kind: 'income', id: f.id, label: f.label, amount: f.amount, date: debitDate(f.day, start, end) })),
+  ].filter(d => d.date).map(d => ({ ...d, done: d.date <= today, inDays: Math.round((d.date - today) / 864e5) })).sort((a, b) => a.date - b.date);
+  const fixedDebits = debits.filter(d => d.kind === 'fixed');
+  const debited = sum(fixedDebits.filter(d => d.done), d => d.amount);
+  const toDebit = sum(fixedDebits.filter(d => !d.done), d => d.amount);
+  const noDate = fixedItems.filter(f => !f.day);
+
+  return { key, y, m, start, end, items, byType, fixedByCat, plaisirByCat, budgets, reserved, free, carryIn, income, fixed, savings, budget, spent, remaining, dim, day, daysLeft, perDay, expected, isCurrent, isPast, daily, cumulative, debits, debited, toDebit, noDate, noDateTotal: sum(noDate, f => f.amount) };
 }
 
 /** Prochains événements (prélèvements / rentrées) sur ~30 jours. */
@@ -135,6 +197,7 @@ export function insights(st, s) {
   } else {
     add('info', `Une fois les charges et l’épargne prévues, il te reste ${eur(s.budget)} par mois à dépenser, soit environ ${eur(s.budget / s.dim)} par jour.`);
   }
+  if (s.carryIn > 0) add('good', `Tu as reporté ${eur(s.carryIn)} du mois dernier : ça gonfle ton budget de ce mois.`);
   const fixedShare = s.fixed / s.income;
   if (fixedShare > 0.5) add('warn', `Tes charges fixes pèsent ${pct(fixedShare)} de tes revenus. Le repère classique est 50 % maximum.`);
   else if (s.fixed > 0) add('good', `Tes charges fixes ne représentent que ${pct(fixedShare)} de tes revenus : bonne marge de manœuvre.`);

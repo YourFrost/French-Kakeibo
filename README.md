@@ -12,6 +12,13 @@ Application de gestion de budget inspirée du **Kakeibo** japonais. PWA mobile :
 - **Prénom** demandé au premier lancement ; **anneau du reste du mois** qui inclut la part encore réservée aux budgets.
 - **Comparaisons** dans le Bilan : mois contre mois précédent (au même jour si le mois est en cours) et vue annuelle (mois par mois, moyenne, mois le plus dépensier, comparaison avec l'année précédente).
 - **Journal** par mois avec filtres, **Bilan** (anneau, rythme du mois, barres journalières, les 4 questions du Kakeibo), **Objectifs** avec versements.
+- **Données protégées** : stockage persistant demandé au navigateur, copie de secours (IndexedDB) restaurée automatiquement si besoin, sauvegarde JSON vers Fichiers / Drive via la feuille de partage du téléphone, avec rappel mensuel.
+- **Historique fidèle** : la situation (revenus, charges, budgets, épargne) est figée pour chaque mois ; modifier ton loyer ne change plus les anciens bilans.
+- **Mois de paie** : le mois de budget peut commencer le jour de ton choix (ex. du 28 au 27).
+- **Prélèvements du mois** : charges fixes marquées « prélevées » à leur date, reste à prélever d'ici la fin du mois, rappel dans le journal.
+- **Fin de mois** : le budget non dépensé peut être reporté au mois suivant ou versé dans une cagnotte (objectif).
+- **Rappel quotidien** paramétrable : bandeau si rien n'est saisi à l'heure choisie, plus un fichier calendrier (.ics) pour une vraie notification récurrente.
+- **Journal** : recherche, filtres par type et par budget, prélèvements passés, export CSV du mois.
 - Thème clair/sombre automatique, animations (respecte `prefers-reduced-motion`), export/import JSON.
 
 ## Lancer

@@ -64,7 +64,7 @@ export function openSheet(cfg) {
       <div class="actions${typed ? ' typed' : ''}">
         ${subs.map(s => `<button type="submit" value="${s.value}" class="btn ${s.cls || 'primary'}" ${s.color ? `style="--c:${s.color}"` : ''}>${s.label}${s.hint ? `<small>${s.hint}</small>` : ''}</button>`).join('')}
       </div>
-      ${cfg.onDelete ? '<button type="button" class="btn ghost danger" data-del>Supprimer</button>' : ''}
+      ${cfg.onDelete ? `<button type="button" class="btn ghost${cfg.deleteLabel ? '' : ' danger'}" data-del>${cfg.deleteLabel || 'Supprimer'}</button>` : ''}
     </form>`;
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('open')));
 

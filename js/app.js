@@ -1,5 +1,5 @@
 import * as S from './store.js';
-import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, upcoming, insights, goalMonthly, monthsLeft } from './calc.js';
+import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, insights, goalMonthly, monthsLeft, curYM as curYMc, periodOfDate, periodRange, capture } from './calc.js';
 import { ring, stackBar, bars, line, legend, yearBars, compareLines, kick } from './charts.js';
 import { openSheet, esc, toast } from './ui.js';
 
@@ -8,7 +8,9 @@ const nav = document.getElementById('nav');
 const now = () => new Date();
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
-const ui = { bmode: 'month', year: now().getFullYear(), tab: 'home', step: 0, filter: 'all', ym: { y: now().getFullYear(), m: now().getMonth() }, lastId: null };
+const ui = { bmode: 'month', year: 0, tab: 'home', step: 0, filter: 'all', fbudget: 'all', q: '', ym: { y: 0, m: 0 }, lastId: null };
+const sd = () => S.get().startDay || 1;
+const curYM = () => curYMc(sd(), now());   // période en cours (mois civil ou mois de paie)
 
 /* ---------- Icônes ---------- */
 const P = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -25,6 +27,9 @@ const ICON = {
   fixed: P('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18"/>'),
   goal: P('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>'),
   budget: P('<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>'),
+  search: P('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  calendar: P('<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+  bell: P('<path d="M6 17V11a6 6 0 1 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/>'),
   check: P('<path d="m5 12.5 4.5 4.5L19 7.5"/>'),
 };
 
@@ -108,12 +113,12 @@ function openExpense(id) {
         if (e) Object.assign(s.expenses.find(x => x.id === id), data);
         else { const n = { id: S.uid(), ...data }; ui.lastId = n.id; s.expenses.push(n); }
       });
-      const ym = parseISO(data.date);
-      ui.ym = { y: ym.getFullYear(), m: ym.getMonth() };
+      const ym = periodOfDate(parseISO(data.date), sd());
+      ui.ym = ym;
       render({ soft: true });
       let msg = `${eur(data.amount)} · ${TYPES[type].label} ajouté`;
       if (data.budget) {
-        const b = summary(S.get(), ym.getFullYear(), ym.getMonth(), now()).budgets.find(x => x.id === data.budget);
+        const b = summary(S.get(), ym.y, ym.m, now()).budgets.find(x => x.id === data.budget);
         if (b && b.spent > b.amount) msg = `⚠️ Budget « ${b.label} » dépassé de ${eur(b.spent - b.amount)}`;
         else if (b && b.spent >= b.amount * 0.8) msg = `Budget « ${b.label} » à ${Math.round(b.spent / b.amount * 100)} %`;
       }
@@ -197,6 +202,101 @@ function plaisirCard(s) {
       <div class="pbar plais"><i data-p="${(c.v / pc[0].v * 100).toFixed(1)}%"></i></div></div>`).join('')}
     ${S.get().budgets.length ? '' : '<p class="help hint">Crée des budgets (Réglages) et rattache-les à tes dépenses pour voir où partent tes plaisirs.</p>'}</section>`;
 }
+/* ---------- Sauvegarde, rappel, fin de mois, prélèvements ---------- */
+/** Enregistre un fichier : feuille de partage du téléphone (Fichiers, Drive…) si possible, sinon téléchargement. */
+async function saveFile(name, text, mime) {
+  const file = new File([text], name, { type: mime });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return 'shared'; }
+  } catch (e) { if (e.name === 'AbortError') return 'cancel'; }
+  const url = URL.createObjectURL(file);
+  Object.assign(document.createElement('a'), { href: url, download: name }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return 'downloaded';
+}
+const daysSince = s => Math.floor((now() - parseISO(s)) / 864e5);
+function backupDue(st) {
+  if (!st.onboarded || st.expenses.length < 10) return false;
+  if (st.backupSnooze && st.backupSnooze > iso(now())) return false;
+  return !st.lastBackup || daysSince(st.lastBackup) > 30;
+}
+function reminderDue(st = S.get()) {
+  const r = st.reminder;
+  if (!st.onboarded || !r || !r.on) return false;
+  const t = now(), [h, mi] = r.time.split(':').map(Number), td = iso(t);
+  if (t.getHours() * 60 + t.getMinutes() < h * 60 + mi) return false;
+  return r.skip !== td && !st.expenses.some(e => e.date === td);
+}
+const sum = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
+const mLong = (y, m) => new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(y, m, 1));
+const startDayCard = () => `<section class="card"><div class="rows"><button class="row" data-act="edit-startday"><span class="ico fixed">${ICON.calendar}</span><span class="grow"><b>Début du mois</b>
+  <small>${sd() > 1 ? `${sd()} (jour de paie) · du ${sd()} au ${sd() - 1}` : '1er du mois (mois civil)'}</small></span><span class="link">Modifier</span></button></div></section>`;
+
+/** Période précédente à clôturer (budget non dépensé à affecter), si elle existe. */
+function closureInfo(st) {
+  const c = curYM(), pd = new Date(c.y, c.m - 1, 1);
+  const pv = summary(st, pd.getFullYear(), pd.getMonth(), now());
+  const cl = st.closures[pv.key];
+  const left = pv.remaining - (cl ? sum(cl.allocations, a => a.amount) : 0);
+  return pv.isPast && !(cl && cl.done) && left >= 1 && pv.items.length ? { pv, left } : null;
+}
+function closureCard(s) {
+  const cl = S.get().closures[s.key];
+  const goalName = id => (S.get().goals.find(g => g.id === id) || { label: 'cagnotte supprimée' }).label;
+  const lines = cl ? cl.allocations.map(a => `<div class="row static"><span class="grow"><b>${a.to === 'carry' ? 'Reporté au mois suivant' : `Cagnotte · ${esc(goalName(a.to))}`}</b></span><span class="amt">${eur(a.amount)}</span></div>`).join('') : '';
+  const left = s.remaining - (cl ? sum(cl.allocations, a => a.amount) : 0);
+  const can = s.isPast && !(cl && cl.done) && left >= 1 && s.items.length;
+  if (!lines && !can) return '';
+  return `<section class="card"><div class="card-h"><h3>Fin de mois</h3></div>${lines ? `<div class="rows">${lines}</div>` : ''}
+    ${can ? `<p class="empty-s">${eur(left)} non dépensés. <button class="link" data-act="closure" data-key="${s.key}">Les affecter</button></p>` : ''}</section>`;
+}
+function openClosure(key) {
+  const st = S.get(), [y, mo] = key.split('-').map(Number);
+  const s = summary(st, y, mo - 1, now()), cl = st.closures[key];
+  const left = s.remaining - (cl ? sum(cl.allocations, a => a.amount) : 0);
+  if (left < 1) return;
+  const goals = st.goals.filter(g => (g.saved || 0) < g.target);
+  openSheet({
+    title: `Fin de ${mLong(y, mo - 1)}`,
+    message: `Il te reste <b>${eur(left)}</b> de budget non dépensé. Où veux-tu le mettre ?`,
+    fields: [
+      { name: 'amount', type: 'money', value: Math.round(left * 100) / 100 },
+      { name: 'dest', label: 'Destination', type: 'choice', value: 'carry', options: [{ value: 'carry', label: 'Mois suivant' }, ...goals.map(g => ({ value: g.id, label: `Cagnotte · ${g.label}` }))] },
+    ],
+    submitLabel: 'Affecter', deleteLabel: 'Garder, ne rien reporter',
+    onSubmit: v => {
+      const amt = Math.min(v.amount, left);
+      S.update(d => {
+        const c = (d.closures[key] ||= { done: false, allocations: [] });
+        c.allocations.push({ to: v.dest, amount: amt });
+        if (v.dest !== 'carry') { const g = d.goals.find(x => x.id === v.dest); if (g) g.saved = (g.saved || 0) + amt; }
+        if (left - amt < 1) c.done = true;
+      });
+      render({ soft: true });
+      toast(v.dest === 'carry' ? `${eur(amt)} reportés sur le mois suivant` : `${eur(amt)} ajoutés à la cagnotte`);
+    },
+    onDelete: () => { S.update(d => { (d.closures[key] ||= { done: false, allocations: [] }).done = true; }); render({ soft: true }); },
+  });
+}
+function debitsCard(s) {
+  if (!s.debits.length && !s.noDate.length) return '';
+  const up = s.debits.filter(d => !d.done), passed = s.debits.filter(d => d.done && d.kind === 'fixed');
+  const total = s.debited + s.toDebit;
+  return `<section class="card"><div class="card-h"><h3>Prélèvements du mois</h3><small>${s.toDebit > 0 ? `Reste ${eur(s.toDebit)}` : 'Tout est passé'}</small></div>
+    ${total ? `<div class="pbar"><i data-p="${(s.debited / total * 100).toFixed(1)}%"></i></div><p class="deb-sum"><span>${eur(s.debited)} prélevés</span><span>${eur(s.toDebit)} à venir</span></p>` : ''}
+    ${up.length ? `<div class="rows">${up.slice(0, 6).map(d => `<div class="row static"><span class="ico ${d.kind}">${ICON[d.kind]}</span><span class="grow"><b>${esc(d.label)}</b><small>${dueLabel(d.inDays)} · ${fmtD(d.date)}</small></span><span class="amt ${d.kind === 'income' ? 'plus' : ''}">${d.kind === 'income' ? '+' : '−'}${eur(d.amount)}</span></div>`).join('')}</div>` : ''}
+    ${passed.length ? `<p class="fsum">✓ ${passed.length} prélèvement${passed.length > 1 ? 's' : ''} déjà passé${passed.length > 1 ? 's' : ''} · ${eur(s.debited)}</p>` : ''}
+    ${s.noDate.length ? `<p class="fsum">+ ${s.noDate.length} charge${s.noDate.length > 1 ? 's' : ''} sans date · ${eur(s.noDateTotal)}</p>` : ''}</section>`;
+}
+function banners(st) {
+  const b = [];
+  if (reminderDue(st)) b.push(`<section class="card banner"><div><b>Tes dépenses du jour ?</b><small>Rien de noté aujourd’hui.</small></div><div class="bn-act"><button class="mini" data-act="add-expense">Ajouter</button><button class="link" data-act="skip-today">Rien aujourd’hui</button></div></section>`);
+  const cl = closureInfo(st);
+  if (cl) b.push(`<section class="card banner accent"><div><b>${eur(cl.left)} non dépensés en ${mLong(cl.pv.y, cl.pv.m)}</b><small>Reporte-les au mois suivant ou mets-les dans une cagnotte.</small></div><div class="bn-act"><button class="mini" data-act="closure" data-key="${cl.pv.key}">Choisir</button></div></section>`);
+  if (backupDue(st)) b.push(`<section class="card banner"><div><b>Pense à sauvegarder tes données</b><small>${st.lastBackup ? `Dernière sauvegarde il y a ${daysSince(st.lastBackup)} jours.` : 'Aucune sauvegarde pour l’instant.'}</small></div><div class="bn-act"><button class="mini" data-act="export">Sauvegarder</button><button class="link" data-act="backup-later">Plus tard</button></div></section>`);
+  return b.slice(0, 2).join('');
+}
+
 function notes(list) {
   return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i></i><p>${n.text}</p></div>`).join('')}</div>`;
 }
@@ -208,9 +308,12 @@ function ringParts(s) {
   if (!over && s.reserved > 0) parts.push({ v: s.reserved / s.budget, color: 'var(--reserve)' });
   return { over, parts };
 }
+const fmtD = d => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(d);
 const monthNav = () => {
-  const cur = ui.ym.y === now().getFullYear() && ui.ym.m === now().getMonth();
-  return `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Mois précédent">${ICON.left}</button><b>${monthName(ui.ym)}</b>
+  const c = curYM(), cur = ui.ym.y === c.y && ui.ym.m === c.m;
+  const r = sd() > 1 ? periodRange(ui.ym.y, ui.ym.m, sd()) : null;
+  return `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Mois précédent">${ICON.left}</button>
+    <div class="mn"><b>${monthName(ui.ym)}</b>${r ? `<small>${fmtD(r.start)} – ${fmtD(r.end)}</small>` : ''}</div>
     <button data-act="month" data-d="1" aria-label="Mois suivant" ${cur ? 'disabled' : ''}>${ICON.right}</button></div>`;
 };
 
@@ -231,12 +334,12 @@ function onboarding() {
       <div class="field name-field"><label for="name">Comment t’appelles-tu ?</label><input id="name" autocomplete="given-name" autocapitalize="words" maxlength="30" placeholder="Ton prénom" value="${esc(st.name)}"></div>
       <div class="ob-foot"><button class="btn primary" data-act="ob-next" ${st.name ? '' : 'disabled'}>Commencer</button><small>Tes données restent sur ton téléphone.</small></div></div>`;
   }
-  if (ui.step === 1) body = `<h1>Tes rentrées</h1><p class="lead">Salaire et autres revenus nets reçus chaque mois.</p>${listBlock('income', 'Rentrées d’argent', st.incomes, 'Ajoute ton salaire pour commencer.')}${next('Continuer', !st.incomes.length)}`;
+  if (ui.step === 1) body = `<h1>Tes rentrées</h1><p class="lead">Salaire et autres revenus nets reçus chaque mois.</p>${listBlock('income', 'Rentrées d’argent', st.incomes, 'Ajoute ton salaire pour commencer.')}${startDayCard()}${next('Continuer', !st.incomes.length)}`;
   if (ui.step === 2) body = `<h1>Tes dépenses fixes</h1><p class="lead">Loyer, abonnements, assurances… avec leur date de prélèvement.</p>${listBlock('fixed', 'Dépenses fixes', st.fixed, 'Rien pour l’instant — tu peux passer cette étape.')}${next(st.fixed.length ? 'Continuer' : 'Passer')}`;
   if (ui.step === 3) body = `<h1>Tes budgets</h1><p class="lead">Une limite mensuelle par poste (courses, transport…) pour ne pas la dépasser. Optionnel.</p>${listBlock('budget', 'Budgets mensuels', st.budgets, 'Tu pourras en ajouter plus tard.')}${next(st.budgets.length ? 'Continuer' : 'Passer')}`;
   if (ui.step === 4) body = `<h1>Tes objectifs</h1><p class="lead">Qu’est-ce que tu veux t’offrir plus tard ? Avec ou sans délai.</p>${listBlock('goal', 'Objectifs d’épargne', st.goals, 'Vacances, fonds d’urgence, projet… ajoute-en un.')}${next(st.goals.length ? 'Voir mon budget' : 'Voir mon budget sans objectif')}`;
   if (ui.step === 5) {
-    const s = summary(st, now().getFullYear(), now().getMonth(), now());
+    const c = curYM(), s = summary(st, c.y, c.m, now());
     body = `<h1>Ton budget</h1><p class="lead">Voici la situation calculée pour ton mois.</p>
       <section class="card hero-sum"><small>Reste à vivre / mois</small><div class="big ${s.budget < 0 ? 'neg' : ''}" data-count="${s.budget}">${eur(0)}</div>
       <p class="sub">soit environ <b>${eur(Math.max(0, s.budget) / s.dim)}</b> par jour</p>
@@ -250,13 +353,13 @@ function onboarding() {
 
 /* ---------- Accueil ---------- */
 function home() {
-  const st = S.get(), t = now();
-  const s = summary(st, t.getFullYear(), t.getMonth(), t);
+  const st = S.get(), t = now(), c = curYM();
+  const s = summary(st, c.y, c.m, t);
   const { parts, over } = ringParts(s);
-  const up = upcoming(st, t, 5);
   const date = cap(new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(t));
   return `<div class="page stagger">
     <header class="top"><div><small>${date}</small><h1>Bonjour${st.name ? ' ' + esc(st.name) : ''} 👋</h1></div><button class="icon-btn" data-act="tab" data-v="settings" aria-label="Réglages">${ICON.gear}</button></header>
+    ${banners(st)}
     <section class="card hero">
       ${ring(parts, { over, size: 232, stroke: 15, children: `<small>${s.remaining < 0 ? 'Dépassement' : 'Reste ce mois'}</small><div class="big ${s.remaining < 0 ? 'neg' : ''}" data-count="${Math.abs(s.remaining)}">${eur(0)}</div><small>sur ${eur(Math.max(0, s.budget))}</small>` })}
       ${s.budgets.length && s.budget > 0 ? `<div class="ringkey"><span><i style="background:conic-gradient(var(--besoin) 0 33%, var(--plaisir) 0 66%, var(--imprevu) 0)"></i>Dépensé <b>${eur(s.spent)}</b></span><span><i style="background:var(--reserve)"></i>Budgets à venir <b>${eur(s.reserved)}</b></span><span><i class="free"></i>Libre <b>${eur(Math.max(0, s.free))}</b></span></div>` : ''}
@@ -264,28 +367,54 @@ function home() {
     </section>
     <section class="types">${TYPE_KEYS.map(k => `<div class="tcard" style="--c:${TYPES[k].color}"><i></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
     ${budgetsCard(s, true)}
-    ${up.length ? `<section class="card"><div class="card-h"><h3>À venir</h3></div><div class="rows">${up.map(e => `<div class="row static"><span class="ico ${e.kind}">${ICON[e.kind]}</span><span class="grow"><b>${esc(e.label)}</b><small>${dueLabel(e.inDays)}</small></span><span class="amt ${e.kind === 'income' ? 'plus' : ''}">${e.kind === 'income' ? '+' : '−'}${eur(e.amount)}</span></div>`).join('')}</div></section>` : ''}
+    ${debitsCard(s)}
     <section class="card"><div class="card-h"><h3>Notes du moment</h3></div>${notes(insights(st, s).slice(0, 3))}</section>
   </div>`;
 }
 
 /* ---------- Journal ---------- */
-function journal() {
-  const s = sumView();
-  const f = ui.filter;
-  const items = s.items.filter(e => f === 'all' || e.type === f).sort((a, b) => b.date.localeCompare(a.date) || 0);
+/** Lignes du journal : dépenses filtrées + prélèvements déjà passés. */
+function journalRows(s) {
+  const st = S.get(), f = ui.filter, fb = ui.fbudget, q = ui.q.trim().toLowerCase();
+  const bname = id => (st.budgets.find(b => b.id === id) || {}).label || '';
+  const rows = [];
+  s.items.forEach(e => {
+    if (f !== 'all' && e.type !== f) return;
+    if (fb === 'none' && e.budget) return;
+    if (fb !== 'all' && fb !== 'none' && e.budget !== fb) return;
+    if (q && !`${e.label || ''} ${bname(e.budget)} ${TYPES[e.type].label} ${String(e.amount).replace('.', ',')}`.toLowerCase().includes(q)) return;
+    rows.push({ kind: 'exp', date: e.date, e, bname: bname(e.budget) });
+  });
+  if ((f === 'all' || f === 'debit') && fb === 'all') {
+    s.debits.filter(d => d.done && (!q || d.label.toLowerCase().includes(q) || 'prélèvement rentrée'.includes(q))).forEach(d => rows.push({ kind: 'deb', date: iso(d.date), d }));
+  }
+  return rows.sort((a, b) => b.date.localeCompare(a.date));
+}
+function journalList() {
+  const s = sumView(), rows = journalRows(s);
+  const exp = rows.filter(r => r.kind === 'exp');
+  const filtered = ui.q || ui.filter !== 'all' || ui.fbudget !== 'all';
+  const line = filtered ? `<p class="fsum"><b>${exp.length}</b> dépense${exp.length > 1 ? 's' : ''} · <b>${eur(sum(exp, r => r.e.amount))}</b></p>` : '';
+  if (!rows.length) return `${line}<div class="empty"><div class="bubble">${ICON.journal}</div><p>${filtered ? 'Aucun résultat.' : 'Aucune dépense ce mois-ci.'}</p><small>${filtered ? 'Essaie un autre filtre.' : 'Appuie sur + pour noter la première.'}</small></div>`;
   const groups = {};
-  items.slice().reverse().sort((a, b) => b.date.localeCompare(a.date)).forEach(e => (groups[e.date] ||= []).push(e));
-  const chips = [['all', 'Tout'], ...TYPE_KEYS.map(k => [k, TYPES[k].label])].map(([k, l]) => `<button class="chip${f === k ? ' on' : ''}" ${k !== 'all' ? `style="--c:${TYPES[k].color}"` : ''} data-act="filter" data-v="${k}">${l}</button>`).join('');
+  rows.forEach(r => (groups[r.date] ||= []).push(r));
+  const rowHTML = r => r.kind === 'exp'
+    ? `<button class="row${ui.lastId === r.e.id ? ' pop' : ''}" data-act="edit-expense" data-id="${r.e.id}"><span class="dot" style="background:${TYPES[r.e.type].color}"></span><span class="grow"><b>${esc(r.e.label || TYPES[r.e.type].label)}</b><small>${TYPES[r.e.type].label}${r.bname ? ' · ' + esc(r.bname) : ''}</small></span><span class="amt">−${eur(r.e.amount)}</span></button>`
+    : `<div class="row static debit"><span class="ico ${r.d.kind}">${ICON[r.d.kind]}</span><span class="grow"><b>${esc(r.d.label)}</b><small>${r.d.kind === 'income' ? 'Rentrée' : 'Prélèvement automatique'}</small></span><span class="amt ${r.d.kind === 'income' ? 'plus' : ''}">${r.d.kind === 'income' ? '+' : '−'}${eur(r.d.amount)}</span></div>`;
+  return line + Object.entries(groups).map(([d, list]) => `<section class="day"><h4><span>${dayLabel(d)}</span><span>${eur(sum(list.filter(r => r.kind === 'exp'), r => r.e.amount))}</span></h4><div class="rows card">${list.map(rowHTML).join('')}</div></section>`).join('');
+}
+function journal() {
+  const s = sumView(), st = S.get(), f = ui.filter;
+  const chip = (act, v, label, on, color) => `<button class="chip${on ? ' on' : ''}" ${color ? `style="--c:${color}"` : ''} data-act="${act}" data-v="${v}">${esc(label)}</button>`;
+  const types = [chip('filter', 'all', 'Tout', f === 'all'), ...TYPE_KEYS.map(k => chip('filter', k, TYPES[k].label, f === k, TYPES[k].color)), chip('filter', 'debit', 'Prélèvements', f === 'debit')].join('');
+  const buds = st.budgets.length ? `<div class="chips sub">${[chip('fbudget', 'all', 'Tous budgets', ui.fbudget === 'all'), ...st.budgets.map(b => chip('fbudget', b.id, b.label, ui.fbudget === b.id)), chip('fbudget', 'none', 'Sans budget', ui.fbudget === 'none')].join('')}</div>` : '';
   return `<div class="page stagger">
-    <header class="top"><h1>Journal</h1></header>${monthNav()}
+    <header class="top"><h1>Journal</h1><button class="link" data-act="csv">Exporter CSV</button></header>${monthNav()}
     <section class="card total"><small>Dépensé ce mois</small><div class="big" data-count="${s.spent}">${eur(0)}</div>
       ${stackBar(TYPE_KEYS.map(k => ({ v: s.byType[k], color: TYPES[k].color })))}</section>
-    <div class="chips">${chips}</div>
-    ${items.length ? Object.entries(groups).map(([d, list]) => `<section class="day"><h4><span>${dayLabel(d)}</span><span>${eur(list.reduce((t, e) => t + e.amount, 0))}</span></h4>
-      <div class="rows card">${list.map(e => `<button class="row${ui.lastId === e.id ? ' pop' : ''}" data-act="edit-expense" data-id="${e.id}">
-        <span class="dot" style="background:${TYPES[e.type].color}"></span><span class="grow"><b>${esc(e.label || TYPES[e.type].label)}</b><small>${TYPES[e.type].label}${(S.get().budgets.find(b => b.id === e.budget) || {}).label ? ' · ' + esc(S.get().budgets.find(b => b.id === e.budget).label) : ''}</small></span><span class="amt">−${eur(e.amount)}</span></button>`).join('')}</div></section>`).join('')
-      : `<div class="empty"><div class="bubble">${ICON.journal}</div><p>Aucune dépense ${f === 'all' ? 'ce mois-ci' : 'dans cette catégorie'}.</p><small>Appuie sur + pour noter la première.</small></div>`}
+    <div class="search">${ICON.search}<input id="q" type="search" placeholder="Rechercher (note, budget, montant…)" value="${esc(ui.q)}" autocomplete="off"></div>
+    <div class="chips">${types}</div>${buds}
+    <div id="jlist">${journalList()}</div>
   </div>`;
 }
 
@@ -303,6 +432,7 @@ function bilanMonth() {
     : s.remaining < 0 ? `Tu as dépassé ton budget de ${eur(-s.remaining)}. Le poste le plus lourd : ${TYPES[top].label.toLowerCase()} (${eur(s.byType[top])}). Fixe-toi un plafond pour le mois prochain.`
     : `Ton poste principal : ${TYPES[top].label.toLowerCase()} (${eur(s.byType[top])}). ${top === 'plaisir' ? 'Choisis les plaisirs qui comptent vraiment.' : top === 'imprevu' ? 'Alimente un fonds d’urgence pour amortir les surprises.' : 'Cherche si un besoin peut être optimisé.'}`;
   return `${monthNav()}
+    ${closureCard(s)}
     <section class="card"><div class="card-h"><h3>Répartition de ton revenu</h3></div>
       ${stackBar([{ v: s.fixed, color: 'var(--fixed)' }, { v: s.savings, color: 'var(--save)' }, { v: Math.max(0, s.budget), color: 'var(--accent)' }])}
       <ul class="legend flat"><li><i style="background:var(--fixed)"></i><span>Charges fixes</span><b>${eur(s.fixed)}</b></li><li><i style="background:var(--save)"></i><span>Épargne</span><b>${eur(s.savings)}</b></li><li><i style="background:var(--accent)"></i><span>À dépenser</span><b>${eur(Math.max(0, s.budget))}</b></li></ul></section>
@@ -321,9 +451,7 @@ function bilanMonth() {
 
 /* ---------- Objectifs ---------- */
 /* ---------- Bilan : modes Comparer & Année ---------- */
-const sum = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
 const mShort = (y, m) => new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(new Date(y, m, 1)).replace('.', '');
-const mLong = (y, m) => new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(y, m, 1));
 const deltaHTML = (a, b) => {
   const d = a - b;
   if (Math.abs(d) < 0.005) return '<span class="delta flat">=</span>';
@@ -332,9 +460,10 @@ const deltaHTML = (a, b) => {
 };
 /** Dépenses d'un mois jusqu'au jour `limit` inclus (comparaison à périmètre égal). */
 function upTo(s, limit) {
+  const dayOf = e => Math.round((parseISO(e.date) - s.start) / 864e5) + 1;
   const byType = { besoin: 0, plaisir: 0, imprevu: 0 }, byBudget = {};
   s.items.forEach(e => {
-    if (parseISO(e.date).getDate() > limit) return;
+    if (dayOf(e) > limit) return;
     byType[e.type] += e.amount;
     if (e.budget) byBudget[e.budget] = (byBudget[e.budget] || 0) + e.amount;
   });
@@ -380,15 +509,15 @@ function bilanCompare() {
 }
 
 function bilanYear() {
-  const st = S.get(), y = ui.year, t = now();
+  const st = S.get(), y = ui.year, t = now(), cy = curYM();
   const months = Array.from({ length: 12 }, (_, m) => summary(st, y, m, t));
   const withData = months.filter(s => s.spent > 0);
   const total = sum(months, s => s.spent);
   const yearNav = `<div class="monthnav"><button data-act="year" data-d="-1" aria-label="Année précédente">${ICON.left}</button><b>${y}</b>
-    <button data-act="year" data-d="1" aria-label="Année suivante" ${y >= t.getFullYear() ? 'disabled' : ''}>${ICON.right}</button></div>`;
+    <button data-act="year" data-d="1" aria-label="Année suivante" ${y >= cy.y ? 'disabled' : ''}>${ICON.right}</button></div>`;
   if (!total) return `${yearNav}<div class="empty"><div class="bubble">${ICON.bilan}</div><p>Aucune dépense en ${y}.</p><small>Les mois se remplissent au fil de tes saisies.</small></div>`;
 
-  const limit = y === t.getFullYear() ? t.getMonth() : 11;
+  const limit = y === cy.y ? cy.m : 11;
   const prevTotal = sum(Array.from({ length: limit + 1 }, (_, m) => summary(st, y - 1, m, t)), s => s.spent);
   const done = withData.filter(s => !s.isCurrent);           // mois terminés (le mois en cours est partiel)
   const avg = done.length ? sum(done, s => s.spent) / done.length : total;
@@ -451,18 +580,23 @@ function goals() {
 
 /* ---------- Réglages ---------- */
 function settings() {
-  const st = S.get();
+  const st = S.get(), r = st.reminder || {};
   return `<div class="page stagger">
     <header class="top"><button class="back" data-act="tab" data-v="home" aria-label="Retour">${ICON.left}</button><h1>Réglages</h1><span></span></header>
     <p class="lead tight">Ta situation. Les calculs se mettent à jour automatiquement.</p>
     <section class="card"><div class="card-h"><h3>Profil</h3></div><div class="rows"><button class="row" data-act="edit-name"><span class="grow"><b>Prénom</b><small>${esc(st.name || 'Non renseigné')}</small></span><span class="link">Modifier</span></button></div></section>
+    ${startDayCard()}
+    <section class="card"><div class="card-h"><h3>Rappel quotidien</h3></div><div class="rows">
+      <button class="row" data-act="edit-reminder"><span class="ico fixed">${ICON.bell}</span><span class="grow"><b>${r.on ? `Activé · ${r.time}` : 'Désactivé'}</b><small>Te rappelle de noter tes dépenses du jour</small></span><span class="link">Régler</span></button>
+      ${r.on ? `<button class="row" data-act="reminder-ics"><span class="grow"><b>Ajouter à mon calendrier</b><small>Notification fiable chaque jour, même app fermée</small></span></button>` : ''}</div></section>
     ${listBlock('income', 'Rentrées d’argent', st.incomes, 'Aucune rentrée.')}
     ${listBlock('fixed', 'Dépenses fixes', st.fixed, 'Aucune dépense fixe.')}
     ${listBlock('budget', 'Budgets mensuels', st.budgets, 'Aucun budget.')}
-    ${listBlock('goal', 'Objectifs', st.goals, 'Aucun objectif.')}
+    ${listBlock('goal', 'Objectifs et cagnottes', st.goals, 'Aucun objectif.')}
     <section class="card"><div class="card-h"><h3>Données</h3></div>
-      <div class="rows"><button class="row" data-act="export"><span class="grow"><b>Exporter une sauvegarde</b><small>Fichier JSON</small></span></button>
-      <button class="row" data-act="import"><span class="grow"><b>Importer une sauvegarde</b><small>Remplace les données actuelles</small></span></button>
+      <p class="store" id="persist">Vérification du stockage…</p>
+      <div class="rows"><button class="row" data-act="export"><span class="grow"><b>Sauvegarder sur mon téléphone</b><small>${st.lastBackup ? `Dernière sauvegarde : ${cap(new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(parseISO(st.lastBackup)))}` : 'Jamais sauvegardé'} · fichier à enregistrer dans Fichiers / Drive</small></span></button>
+      <button class="row" data-act="import"><span class="grow"><b>Restaurer une sauvegarde</b><small>Remplace les données actuelles</small></span></button>
       <button class="row danger" data-act="reset"><span class="grow"><b>Tout effacer</b><small>Revenir à zéro</small></span></button></div>
       <input type="file" id="file" accept="application/json" hidden></section>
   </div>`;
@@ -476,7 +610,16 @@ function navHTML() {
 }
 const VIEWS = { home, journal, bilan, goals, settings };
 
+/** Fige la situation de la période en cours (revenus, charges, budgets, épargne) pour garder un historique fidèle. */
+function snap() {
+  const st = S.get();
+  if (!st.onboarded) return;
+  const c = curYM(), key = `${c.y}-${String(c.m + 1).padStart(2, '0')}`, cap = capture(st, now());
+  if (JSON.stringify(st.snapshots[key]) !== JSON.stringify(cap)) S.update(d => { d.snapshots[key] = cap; });
+}
+
 function render({ soft = false } = {}) {
+  snap();
   const st = S.get();
   const y = view.scrollTop, wy = window.scrollY;
   view.classList.toggle('soft', soft);
@@ -493,6 +636,10 @@ function render({ soft = false } = {}) {
   if (soft) { window.scrollTo(0, wy); view.scrollTop = y; } else window.scrollTo(0, 0);
   kick(view);
   ui.lastId = null;
+  if (st.onboarded && ui.tab === 'settings') S.isPersisted().then(p => {
+    const el = document.getElementById('persist');
+    if (el) el.innerHTML = p ? '🔒 Stockage protégé par ton navigateur.' : 'Stockage non garanti : installe l’app sur l’écran d’accueil et fais une sauvegarde régulière.';
+  });
 }
 
 const ACTIONS = {
@@ -503,15 +650,14 @@ const ACTIONS = {
   'edit-item': a => openItem(a.dataset.kind, a.dataset.id),
   contribute: a => openContribute(a.dataset.id),
   month: a => {
-    const d = ui.ym.m + Number(a.dataset.d);
-    const next = new Date(ui.ym.y, d, 1);
-    if (next > now()) return;
-    ui.ym = { y: next.getFullYear(), m: next.getMonth() };
+    const t = ui.ym.y * 12 + ui.ym.m + Number(a.dataset.d), c = curYM();
+    if (t > c.y * 12 + c.m) return;
+    ui.ym = { y: Math.floor(t / 12), m: t % 12 };
     render();
   },
   filter: a => { ui.filter = a.dataset.v; render({ soft: true }); },
   bmode: a => { ui.bmode = a.dataset.v; render(); },
-  year: a => { ui.year = Math.min(now().getFullYear(), ui.year + Number(a.dataset.d)); render(); },
+  year: a => { ui.year = Math.min(curYM().y, ui.year + Number(a.dataset.d)); render(); },
   'goto-month': a => { ui.ym = { y: ui.year, m: Number(a.dataset.m) }; ui.bmode = 'month'; render(); },
   'edit-name': () => openSheet({
     title: 'Ton prénom', fields: [{ name: 'firstname', label: 'Prénom', value: S.get().name, placeholder: 'Ton prénom' }],
@@ -520,10 +666,57 @@ const ACTIONS = {
   'ob-next': () => { ui.step++; render(); },
   'ob-back': () => { ui.step--; render(); },
   'ob-finish': () => { S.update(st => { st.onboarded = true; }); ui.tab = 'home'; render(); },
-  export: () => {
-    const url = URL.createObjectURL(new Blob([S.exportJSON()], { type: 'application/json' }));
-    Object.assign(document.createElement('a'), { href: url, download: `kakeibo-${iso(now())}.json` }).click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  export: async () => {
+    const r = await saveFile(`kakeibo-${iso(now())}.json`, S.exportJSON(), 'application/json');
+    if (r === 'cancel') return;
+    S.update(st => { st.lastBackup = iso(now()); });
+    render({ soft: true });
+    toast(r === 'shared' ? 'Sauvegarde envoyée' : 'Sauvegarde téléchargée');
+  },
+  'backup-later': () => { S.update(st => { st.backupSnooze = iso(new Date(Date.now() + 7 * 864e5)); }); render({ soft: true }); },
+  fbudget: a => { ui.fbudget = a.dataset.v; render({ soft: true }); },
+  csv: async () => {
+    const st = S.get(), s = sumView();
+    const bname = id => (st.budgets.find(b => b.id === id) || {}).label || '';
+    const rows = [['Date', 'Type', 'Montant', 'Budget', 'Note'], ...s.items.slice().sort((a, b) => a.date.localeCompare(b.date)).map(e => [e.date, TYPES[e.type].label, String(e.amount).replace('.', ','), bname(e.budget), e.label || ''])];
+    const text = '\ufeff' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const r = await saveFile(`kakeibo-${s.key}.csv`, text, 'text/csv');
+    if (r !== 'cancel') toast('Export du mois créé');
+  },
+  closure: a => openClosure(a.dataset.key),
+  'skip-today': () => { S.update(st => { st.reminder.skip = iso(now()); }); render({ soft: true }); },
+  'edit-startday': () => openSheet({
+    title: 'Mon mois', message: 'Payé le 28 ? Ton mois de budget peut aller du 28 au 27. Laisse vide pour suivre le mois civil.',
+    fields: [{ name: 'day', label: 'Le mois commence le', type: 'day', optional: true, value: sd() > 1 ? sd() : '', placeholder: '1 = mois civil' }],
+    onSubmit: v => {
+      const d = v.day || 1;
+      if (d > 28) { toast('Choisis un jour entre 1 et 28'); return false; }
+      S.update(st => { st.startDay = d; });
+      ui.ym = curYM(); ui.year = ui.ym.y;
+      render({ soft: true });
+    },
+  }),
+  'edit-reminder': () => {
+    const r = S.get().reminder;
+    openSheet({
+      title: 'Rappel quotidien', focus: false,
+      message: 'Un bandeau t’invite à noter tes dépenses si tu n’as rien saisi aujourd’hui. Pour une vraie notification, même app fermée, ajoute ensuite le rappel à ton calendrier.',
+      fields: [
+        { name: 'on', label: 'Rappel', type: 'choice', value: r.on ? 'on' : 'off', options: [{ value: 'on', label: 'Activé' }, { value: 'off', label: 'Désactivé' }] },
+        { name: 'time', label: 'Heure', type: 'time', value: r.time || '20:00' },
+      ],
+      onSubmit: v => { S.update(st => { st.reminder = { on: v.on === 'on', time: v.time, skip: '' }; }); render({ soft: true }); toast(v.on === 'on' ? `Rappel à ${v.time}` : 'Rappel désactivé'); },
+    });
+  },
+  'reminder-ics': async () => {
+    const r = S.get().reminder, t = now(), p = n => String(n).padStart(2, '0');
+    const [h, m] = r.time.split(':');
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Kakeibo//FR', 'BEGIN:VEVENT', 'UID:kakeibo-rappel-quotidien@kakeibo',
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+      `DTSTART:${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}T${h}${m}00`, 'DURATION:PT5M', 'RRULE:FREQ=DAILY',
+      'SUMMARY:Noter mes dépenses du jour (Kakeibo)', 'BEGIN:VALARM', 'TRIGGER:PT0M', 'ACTION:DISPLAY', 'DESCRIPTION:Kakeibo : note tes dépenses du jour', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    const res = await saveFile('rappel-kakeibo.ics', ics, 'text/calendar');
+    if (res !== 'cancel') toast('Ouvre le fichier pour l’ajouter au calendrier');
   },
   import: () => document.getElementById('file').click(),
   reset: () => openSheet({
@@ -552,6 +745,12 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('input', e => {
+  if (e.target.id === 'q') {
+    ui.q = e.target.value;
+    const l = document.getElementById('jlist');
+    if (l) l.innerHTML = journalList();
+    return;
+  }
   if (e.target.id !== 'name') return;
   const v = e.target.value.trim();
   S.update(st => { st.name = v; });
@@ -562,5 +761,22 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'name' && e.target.value.trim()) { e.preventDefault(); e.target.blur(); ACTIONS['ob-next'](); }
 });
 
-render();
+// Rappel quotidien : surveille l'heure, et le changement de jour / de période
+let lastDue = false, lastDay = iso(now());
+function tick() {
+  if (!S.get().onboarded) return;
+  const d = reminderDue(), today = iso(now());
+  if (today !== lastDay) { lastDay = today; ui.ym = curYM(); ui.year = ui.ym.y; render({ soft: true }); lastDue = d; return; }
+  if (d !== lastDue) { lastDue = d; if (ui.tab === 'home') render({ soft: true }); }
+}
+setInterval(tick, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+
+(async () => {
+  const restored = await S.init();
+  ui.ym = curYM(); ui.year = ui.ym.y;
+  lastDue = reminderDue();
+  render();
+  if (restored) toast('Données restaurées depuis la copie de secours');
+})();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});

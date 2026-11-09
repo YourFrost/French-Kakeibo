@@ -1,4 +1,4 @@
-const VERSION = 'kakeibo-v1';
+const VERSION = 'kakeibo-v2';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'css/style.css', 'js/app.js', 'js/store.js', 'js/calc.js', 'js/charts.js', 'js/ui.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
