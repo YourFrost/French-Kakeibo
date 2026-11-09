@@ -101,7 +101,7 @@ function openExpense(id) {
     title: e ? 'Modifier la dépense' : 'Nouvelle dépense',
     noEnter: true,
     fields: [
-      { name: 'amount', type: 'money', value: e?.amount },
+      { name: 'amount', type: 'money', keypad: true, value: e?.amount },
       ...(st.budgets.length ? [{ name: 'budget', label: 'Budget', type: 'choice', optional: true, value: e?.budget || '', options: st.budgets.map(b => ({ value: b.id, label: b.label })) }] : []),
       { name: 'label', label: 'Note', optional: true, value: e?.label, placeholder: 'Courses, café, essence…', half: true, list: labels },
       { name: 'date', label: 'Date', type: 'date', value: e?.date || iso(now()), half: true },
@@ -133,7 +133,7 @@ function openContribute(id) {
   openSheet({
     title: `Verser sur « ${esc(g.label)} »`,
     message: `Déjà ${eur(g.saved || 0)} sur ${eur(g.target)}.`,
-    fields: [{ name: 'amount', type: 'money' }],
+    fields: [{ name: 'amount', type: 'money', keypad: true }],
     submitLabel: 'Ajouter à l’épargne',
     onSubmit: v => {
       S.update(st => { st.goals.find(x => x.id === id).saved = (g.saved || 0) + v.amount; });
@@ -260,7 +260,7 @@ function openClosure(key) {
     title: `Fin de ${mLong(y, mo - 1)}`,
     message: `Il te reste <b>${eur(left)}</b> de budget non dépensé. Où veux-tu le mettre ?`,
     fields: [
-      { name: 'amount', type: 'money', value: Math.round(left * 100) / 100 },
+      { name: 'amount', type: 'money', keypad: true, value: Math.round(left * 100) / 100 },
       { name: 'dest', label: 'Destination', type: 'choice', value: 'carry', options: [{ value: 'carry', label: 'Mois suivant' }, ...goals.map(g => ({ value: g.id, label: `Cagnotte · ${g.label}` }))] },
     ],
     submitLabel: 'Affecter', deleteLabel: 'Garder, ne rien reporter',
@@ -660,7 +660,7 @@ const ACTIONS = {
   year: a => { ui.year = Math.min(curYM().y, ui.year + Number(a.dataset.d)); render(); },
   'goto-month': a => { ui.ym = { y: ui.year, m: Number(a.dataset.m) }; ui.bmode = 'month'; render(); },
   'edit-name': () => openSheet({
-    title: 'Ton prénom', fields: [{ name: 'firstname', label: 'Prénom', value: S.get().name, placeholder: 'Ton prénom' }],
+    title: 'Ton prénom', autofocus: true, fields: [{ name: 'firstname', label: 'Prénom', value: S.get().name, placeholder: 'Ton prénom' }],
     onSubmit: v => { S.update(st => { st.name = v.firstname; }); render({ soft: true }); },
   }),
   'ob-next': () => { ui.step++; render(); },
@@ -699,7 +699,7 @@ const ACTIONS = {
   'edit-reminder': () => {
     const r = S.get().reminder;
     openSheet({
-      title: 'Rappel quotidien', focus: false,
+      title: 'Rappel quotidien',
       message: 'Un bandeau t’invite à noter tes dépenses si tu n’as rien saisi aujourd’hui. Pour une vraie notification, même app fermée, ajoute ensuite le rappel à ton calendrier.',
       fields: [
         { name: 'on', label: 'Rappel', type: 'choice', value: r.on ? 'on' : 'off', options: [{ value: 'on', label: 'Activé' }, { value: 'off', label: 'Désactivé' }] },
@@ -721,7 +721,7 @@ const ACTIONS = {
   import: () => document.getElementById('file').click(),
   reset: () => openSheet({
     title: 'Tout effacer ?', message: 'Toutes tes données (situation, dépenses, objectifs) seront supprimées définitivement.',
-    submitLabel: 'Oui, tout effacer', fields: [], focus: false,
+    submitLabel: 'Oui, tout effacer', fields: [],
     submitters: [{ label: 'Oui, tout effacer', value: 'ok', cls: 'danger-fill' }],
     onSubmit: () => { S.reset(); ui.step = 0; ui.tab = 'home'; render(); },
   }),

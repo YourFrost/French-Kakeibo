@@ -4,6 +4,15 @@ import { parseAmount } from './calc.js';
 const root = document.getElementById('sheet-root');
 const toastEl = document.getElementById('toast');
 
+// La fenêtre se cale sur la zone réellement visible (quand le clavier est ouvert, elle se réduit au lieu d'être recouverte).
+const vv = window.visualViewport;
+function fit() {
+  if (!vv) return;
+  root.style.setProperty('--vvh', `${vv.height}px`);
+  root.style.setProperty('--vvt', `${vv.offsetTop}px`);
+}
+if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit(); }
+
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let toastTimer;
@@ -16,6 +25,7 @@ export function toast(msg) {
 
 export function closeSheet() {
   root.classList.remove('open');
+  document.body.classList.remove('sheet-open');
   setTimeout(() => { if (!root.classList.contains('open')) root.innerHTML = ''; }, 380);
 }
 
@@ -24,7 +34,11 @@ function fieldHTML(f) {
   const v = f.type === 'money' && f.value ? String(f.value).replace('.', ',') : (f.value ?? '');
   const label = f.label ? `<label for="${id}">${f.label}${f.optional ? ' <em>optionnel</em>' : ''}</label>` : '';
   let input;
-  if (f.type === 'choice') {
+  if (f.type === 'money' && f.keypad) {
+    input = `<input type="hidden" id="${id}" name="${f.name}" value="${esc(v)}">
+      <div class="amount${v ? '' : ' zero'}" data-amount="${f.name}"><span class="amt-v">${esc(v || '0')}</span><span class="cur">€</span></div>
+      <div class="keypad" data-pad="${f.name}">${['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', '⌫'].map(k => `<button type="button" class="kp" data-k="${k}" aria-label="${k === '⌫' ? 'Effacer' : k}">${k}</button>`).join('')}</div>`;
+  } else if (f.type === 'choice') {
     input = `<input type="hidden" name="${f.name}" value="${esc(v)}"><div class="choices" data-choice="${f.name}">${f.options.map(o =>
       `<button type="button" class="pill ch${o.value === v ? ' on' : ''}" data-v="${esc(o.value)}" ${o.color ? `style="--c:${o.color}"` : ''}>${esc(o.label)}</button>`).join('')}</div>`;
   } else if (f.type === 'money') {
@@ -36,7 +50,7 @@ function fieldHTML(f) {
   }
   const list = f.list ? `<datalist id="${id}_l">${f.list.map(x => `<option value="${esc(x)}">`).join('')}</datalist>` : '';
   const sugg = f.suggestions ? `<div class="sugg">${f.suggestions.map(s => `<button type="button" class="pill" data-fill="${f.name}" data-v="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : '';
-  return `<div class="field${f.type === 'money' ? ' big' : ''}${f.half ? ' half' : ''}">${label}${input}${list}${f.help ? `<p class="help">${f.help}</p>` : ''}${sugg}</div>`;
+  return `<div class="field${f.type === 'money' && !f.keypad ? ' big' : ''}${f.keypad ? ' pad' : ''}${f.half ? ' half' : ''}">${label}${input}${list}${f.help ? `<p class="help">${f.help}</p>` : ''}${sugg}</div>`;
 }
 
 /**
@@ -55,8 +69,7 @@ export function openSheet(cfg) {
   const typed = subs.length > 1;
   root.innerHTML = `<div class="backdrop"></div>
     <form class="sheet" novalidate>
-      <div class="grab"></div>
-      <h2>${cfg.title}</h2>
+      <div class="sh-head"><h2>${cfg.title}</h2><button type="button" class="x" aria-label="Fermer">×</button></div>
       ${cfg.message ? `<p class="msg">${cfg.message}</p>` : ''}
       ${cfg.presets ? `<div class="presets"><p class="pick">Idées rapides</p><div class="ptabs">${cfg.presets.map((g, i) => `<button type="button" class="ptab${i ? '' : ' on'}" data-g="${i}">${esc(g.name)}</button>`).join('')}</div><div class="sugg wrap pitems"></div></div>` : ''}
       <div class="fields">${(cfg.fields || []).map(fieldHTML).join('')}</div>
@@ -71,6 +84,36 @@ export function openSheet(cfg) {
   const form = root.querySelector('form');
   const q = n => form.elements[n];
   root.querySelector('.backdrop').onclick = closeSheet;
+  form.querySelector('.x').onclick = closeSheet;
+  document.body.classList.add('sheet-open');
+  // Pavé numérique intégré : évite d'ouvrir le clavier du téléphone pour saisir un montant.
+  form.querySelectorAll('.keypad').forEach(pad => {
+    const name = pad.dataset.pad, hidden = q(name), disp = form.querySelector(`[data-amount="${name}"]`);
+    let fresh = !!hidden.value;                       // valeur préremplie : le 1er chiffre la remplace
+    disp.classList.toggle('sel', fresh);
+    const set = val => { hidden.value = val; disp.querySelector('.amt-v').textContent = val || '0'; disp.classList.toggle('zero', !val); };
+    const press = k => {
+      let val = hidden.value;
+      if (fresh && k !== '⌫') val = '';
+      fresh = false; disp.classList.remove('sel');
+      if (k === '⌫') val = val.slice(0, -1);
+      else if (k === ',') { if (val.includes(',')) return; val = (val || '0') + ','; }
+      else {
+        const dec = val.split(',')[1];
+        if ((dec !== undefined && dec.length >= 2) || val.replace(',', '').length >= 9) return;
+        val = val === '0' ? k : val + k;
+      }
+      set(val);
+      if (navigator.vibrate) navigator.vibrate(6);
+    };
+    pad.addEventListener('click', e => { const b = e.target.closest('.kp'); if (b) press(b.dataset.k); });
+    form.addEventListener('keydown', e => {   // clavier physique (ordinateur)
+      if (e.target.matches('input:not([type=hidden])') || e.ctrlKey || e.metaKey) return;
+      if (/^[0-9]$/.test(e.key)) press(e.key); else if (e.key === ',' || e.key === '.') press(','); else if (e.key === 'Backspace') press('⌫');
+    });
+  });
+  // Quand un champ texte prend le focus (clavier ouvert), on le ramène dans la zone visible.
+  form.addEventListener('focusin', e => { if (e.target.matches('input')) setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 320); });
   form.querySelectorAll('[data-fill]').forEach(b => b.onclick = () => { q(b.dataset.fill).value = b.dataset.v; q(b.dataset.fill).focus(); });
   form.querySelectorAll('.choices').forEach(box => box.addEventListener('click', e => {
     const b = e.target.closest('.ch'); if (!b) return;
@@ -138,7 +181,7 @@ export function openSheet(cfg) {
     box.querySelector('.back-step').onclick = () => { box.remove(); actions.hidden = false; if (pick) pick.textContent = prev; };
   }
 
-  setTimeout(() => { const first = form.querySelector('input'); if (first && cfg.focus !== false) first.focus(); }, 380);
+  if (cfg.autofocus) setTimeout(() => { const first = form.querySelector('input:not([type=hidden])'); if (first) first.focus(); }, 380);
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && root.classList.contains('open')) closeSheet(); });

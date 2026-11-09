@@ -18,6 +18,7 @@ Application de gestion de budget inspirée du **Kakeibo** japonais. PWA mobile :
 - **Prélèvements du mois** : charges fixes marquées « prélevées » à leur date, reste à prélever d'ici la fin du mois, rappel dans le journal.
 - **Fin de mois** : le budget non dépensé peut être reporté au mois suivant ou versé dans une cagnotte (objectif).
 - **Rappel quotidien** paramétrable : bandeau si rien n'est saisi à l'heure choisie, plus un fichier calendrier (.ics) pour une vraie notification récurrente.
+- **Saisie sans clavier système** : pavé numérique intégré pour les montants (dépense, versement, fin de mois) ; les fenêtres apparaissent au centre et se calent sur la zone visible quand le clavier est ouvert.
 - **Journal** : recherche, filtres par type et par budget, prélèvements passés, export CSV du mois.
 - Thème clair/sombre automatique, animations (respecte `prefers-reduced-motion`), export/import JSON.
 
