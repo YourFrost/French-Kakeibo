@@ -21,6 +21,7 @@ Application de gestion de budget inspirée du **Kakeibo** japonais. PWA mobile :
 - **Rappel quotidien** paramétrable : bandeau si rien n'est saisi à l'heure choisie, plus un fichier calendrier (.ics) pour une vraie notification récurrente.
 - **Saisie sans clavier système** : pavé numérique intégré pour les montants (dépense, versement, fin de mois) ; les fenêtres apparaissent au centre et se calent sur la zone visible quand le clavier est ouvert.
 - **Journal** : recherche, filtres par type et par budget, prélèvements passés, export CSV du mois.
+- **Accessibilité (daltonisme)** : palette Okabe-Ito (bleu / orange / rose-violet), motifs (rayures, points, quadrillage) sur chaque catégorie des graphiques et légendes, symboles ▲ / ! / ✓ pour les alertes et variations ; motifs désactivables dans Réglages.
 - Thème clair/sombre automatique, animations (respecte `prefers-reduced-motion`), export/import JSON.
 
 ## Lancer

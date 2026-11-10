@@ -1,6 +1,6 @@
 import * as S from './store.js';
 import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, insights, allocation, goalMonthly, monthsLeft, curYM as curYMc, periodOfDate, periodRange, capture } from './calc.js';
-import { ring, stackBar, bars, line, legend, yearBars, compareLines, kick } from './charts.js';
+import { ring, stackBar, bars, line, legend, yearBars, compareLines, kick, fill } from './charts.js';
 import { openSheet, esc, toast } from './ui.js';
 
 const view = document.getElementById('view');
@@ -167,7 +167,7 @@ function itemRow(kind, it) {
     sub = it.day ? `Le ${it.day} de chaque mois` : 'Chaque mois';
     if (kind === 'fixed') {
       const c = FIXED_CATS[it.cat || 'indispensable'];
-      sub = `<i class="cdot" style="background:${c.color}"></i>${c.label} · ${sub}${it.until ? ` · jusqu’à ${fmtMonth(it.until)}` : ''}`;
+      sub = `<i class="cdot" style="background:${fill(c.color)}"></i>${c.label} · ${sub}${it.until ? ` · jusqu’à ${fmtMonth(it.until)}` : ''}`;
     }
   }
   return `<button class="row${ui.lastId === it.id ? ' pop' : ''}" data-act="edit-item" data-kind="${kind}" data-id="${it.id}">
@@ -184,7 +184,7 @@ function budgetsCard(s, add) {
     const r = b.spent / b.amount, cls = r > 1 ? 'over' : r >= 0.8 ? 'warn' : '';
     return `<button class="bud ${cls}" data-act="edit-item" data-kind="budget" data-id="${b.id}"><div class="bud-h"><b>${esc(b.label)}</b><span>${eur(b.spent)} <small>/ ${eur(b.amount)}</small></span></div>
       <div class="pbar"><i data-p="${Math.min(100, r * 100).toFixed(1)}%"></i></div>
-      <small>${r > 1 ? `Dépassé de ${eur(b.spent - b.amount)}` : `Il reste ${eur(b.amount - b.spent)}`}</small></button>`;
+      <small class="st">${r > 1 ? `▲ Dépassé de ${eur(b.spent - b.amount)}` : r >= 0.8 ? `! Bientôt atteint · il reste ${eur(b.amount - b.spent)}` : `Il reste ${eur(b.amount - b.spent)}`}</small></button>`;
   }).join('')}</section>`;
 }
 function fixedCatsCard(s) {
@@ -192,7 +192,7 @@ function fixedCatsCard(s) {
   const ks = Object.keys(FIXED_CATS);
   return `<section class="card"><div class="card-h"><h3>Charges fixes par catégorie</h3></div>
     ${stackBar(ks.map(k => ({ v: s.fixedByCat[k], color: FIXED_CATS[k].color })))}
-    <ul class="legend flat">${ks.map(k => `<li><i style="background:${FIXED_CATS[k].color}"></i><span>${FIXED_CATS[k].label}</span><b>${eur(s.fixedByCat[k])}</b></li>`).join('')}</ul></section>`;
+    <ul class="legend flat">${ks.map(k => `<li><i style="background:${fill(FIXED_CATS[k].color)}"></i><span>${FIXED_CATS[k].label}</span><b>${eur(s.fixedByCat[k])}</b></li>`).join('')}</ul></section>`;
 }
 function plaisirCard(s) {
   const pc = Object.entries(s.plaisirByCat).map(([label, v]) => ({ label, v })).filter(c => c.v > 0).sort((a, b) => b.v - a.v);
@@ -313,12 +313,12 @@ function banners(st) {
 }
 
 function notes(list) {
-  return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i></i><p>${n.text}</p></div>`).join('')}</div>`;
+  return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i class="ni">${{ good: '✓', warn: '!', info: 'i' }[n.tone]}</i><p>${n.text}</p></div>`).join('')}</div>`;
 }
 /** Parts de l'anneau : la partie déjà consommée de chaque bloc est estompée, la partie restante est pleine. */
 function allocParts(al) {
   if (al.P <= 0) return [];
-  const seg = (used, total, color) => [{ v: Math.min(used, total) / al.P, color, o: 0.3 }, { v: Math.max(0, total - used) / al.P, color }];
+  const seg = (used, total, color) => [{ v: Math.min(used, total) / al.P, color, o: 0.42 }, { v: Math.max(0, total - used) / al.P, color }];
   return [...seg(al.usedF, al.F, 'var(--c-fix)'), ...seg(al.usedB, al.B, 'var(--c-bud)'), ...seg(al.eroded, al.S, 'var(--c-sav)'), ...seg(al.usedR, al.R, 'var(--c-free)')];
 }
 function legendAlloc(s, al) {
@@ -328,13 +328,13 @@ function legendAlloc(s, al) {
     ['var(--c-sav)', 'Épargne visée', al.S, al.eroded > 0 ? `${eur(al.eroded)} entamés` : 'versée si budget tenu'],
     ['var(--c-free)', 'Reste libre', al.R, `${eur(Math.max(0, al.R - al.usedR))} disponibles`],
   ].filter(r => r[2] > 0);
-  return `<p class="faded-note"><i></i>Partie estompée = déjà prélevée ou dépensée</p><div class="alloc">${rows.map(([c, l, a, sub]) => `<div class="al"><i style="background:${c}"></i><div><small>${l}</small><b>${eur(a)}</b><span>${sub}</span></div></div>`).join('')}</div>`;
+  return `<p class="faded-note"><i></i>Partie estompée = déjà prélevée ou dépensée</p><div class="alloc">${rows.map(([c, l, a, sub]) => `<div class="al"><i style="background:${fill(c)}"></i><div><small>${l}</small><b>${eur(a)}</b><span>${sub}</span></div></div>`).join('')}</div>`;
 }
 /** Barre + légende des 4 parts du revenu (Bilan, récapitulatif). */
 function allocBar(s) {
   const al = allocation(s);
   const rows = [['var(--c-fix)', 'Prélèvements', al.F], ['var(--c-bud)', 'Budgets', al.B], ['var(--c-sav)', 'Épargne visée', al.S], ['var(--c-free)', 'Reste libre', al.R]];
-  return `${stackBar(rows.map(r => ({ v: r[2], color: r[0] })))}<ul class="legend flat">${rows.map(([c, l, v]) => `<li><i style="background:${c}"></i><span>${l}</span><b>${eur(v)}</b></li>`).join('')}</ul>`;
+  return `${stackBar(rows.map(r => ({ v: r[2], color: r[0] })))}<ul class="legend flat">${rows.map(([c, l, v]) => `<li><i style="background:${fill(c)}"></i><span>${l}</span><b>${eur(v)}</b></li>`).join('')}</ul>`;
 }
 const fmtD = d => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(d);
 const monthNav = () => {
@@ -393,7 +393,7 @@ function home() {
       <p class="pace">${s.remaining > 0 ? `Tu peux dépenser <b>${eur(s.perDay)}</b> par jour · ${s.daysLeft} j restants` : s.budget <= 0 ? 'Revois tes charges dans les réglages.' : 'Budget du mois épuisé — seulement l’essentiel !'}
         ${s.remaining > 0 && s.daysLeft && al.S > 0 ? `<br><small>ou <b>${eur(Math.max(0, s.remaining - al.S) / s.daysLeft)}</b> par jour pour garder ton épargne de ${eur(al.S)}</small>` : ''}</p>
     </section>
-    <section class="types">${TYPE_KEYS.map(k => `<div class="tcard" style="--c:${TYPES[k].color}"><i></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
+    <section class="types">${TYPE_KEYS.map(k => `<div class="tcard"><i style="background:${fill(TYPES[k].color)}"></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
     ${budgetsCard(s, true)}
     ${debitsCard(s)}
     <section class="card"><div class="card-h"><h3>Notes du moment</h3></div>${notes(insights(st, s).slice(0, 3))}</section>
@@ -427,13 +427,13 @@ function journalList() {
   const groups = {};
   rows.forEach(r => (groups[r.date] ||= []).push(r));
   const rowHTML = r => r.kind === 'exp'
-    ? `<button class="row${ui.lastId === r.e.id ? ' pop' : ''}" data-act="edit-expense" data-id="${r.e.id}"><span class="dot" style="background:${TYPES[r.e.type].color}"></span><span class="grow"><b>${esc(r.e.label || TYPES[r.e.type].label)}</b><small>${TYPES[r.e.type].label}${r.bname ? ' · ' + esc(r.bname) : ''}</small></span><span class="amt">−${eur(r.e.amount)}</span></button>`
+    ? `<button class="row${ui.lastId === r.e.id ? ' pop' : ''}" data-act="edit-expense" data-id="${r.e.id}"><span class="dot" style="background:${fill(TYPES[r.e.type].color)}"></span><span class="grow"><b>${esc(r.e.label || TYPES[r.e.type].label)}</b><small>${TYPES[r.e.type].label}${r.bname ? ' · ' + esc(r.bname) : ''}</small></span><span class="amt">−${eur(r.e.amount)}</span></button>`
     : `<div class="row static debit"><span class="ico ${r.d.kind}">${ICON[r.d.kind]}</span><span class="grow"><b>${esc(r.d.label)}</b><small>${r.d.kind === 'income' ? 'Rentrée' : 'Prélèvement automatique'}</small></span><span class="amt ${r.d.kind === 'income' ? 'plus' : ''}">${r.d.kind === 'income' ? '+' : '−'}${eur(r.d.amount)}</span></div>`;
   return line + Object.entries(groups).map(([d, list]) => `<section class="day"><h4><span>${dayLabel(d)}</span><span>${eur(sum(list.filter(r => r.kind === 'exp'), r => r.e.amount))}</span></h4><div class="rows card">${list.map(rowHTML).join('')}</div></section>`).join('');
 }
 function journal() {
   const s = sumView(), st = S.get(), f = ui.filter;
-  const chip = (act, v, label, on, color) => `<button class="chip${on ? ' on' : ''}" ${color ? `style="--c:${color}"` : ''} data-act="${act}" data-v="${v}">${esc(label)}</button>`;
+  const chip = (act, v, label, on, color) => `<button class="chip${on ? ' on' : ''}" data-act="${act}" data-v="${v}">${color ? `<i class="cdot" style="background:${fill(color)}"></i>` : ''}${esc(label)}</button>`;
   const types = [chip('filter', 'all', 'Tout', f === 'all'), ...TYPE_KEYS.map(k => chip('filter', k, TYPES[k].label, f === k, TYPES[k].color)), chip('filter', 'debit', 'Prélèvements', f === 'debit'), chip('filter', 'income', 'Rentrées', f === 'income')].join('');
   const active = ui.q || f !== 'all' || ui.fbudget !== 'all';
   const buds = st.budgets.length ? `<div class="chips sub">${[chip('fbudget', 'all', 'Tous budgets', ui.fbudget === 'all'), ...st.budgets.map(b => chip('fbudget', b.id, b.label, ui.fbudget === b.id)), chip('fbudget', 'none', 'Sans budget', ui.fbudget === 'none')].join('')}</div>` : '';
@@ -485,7 +485,7 @@ const deltaHTML = (a, b) => {
   const d = a - b;
   if (Math.abs(d) < 0.005) return '<span class="delta flat">=</span>';
   const p = b ? ` (${d > 0 ? '+' : '−'}${Math.round(Math.abs(d) / b * 100)} %)` : '';
-  return `<span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : '−'}${eur(Math.abs(d))}${p}</span>`;
+  return `<span class="delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲ +' : '▼ −'}${eur(Math.abs(d))}${p}</span>`;
 };
 /** Dépenses d'un mois jusqu'au jour `limit` inclus (comparaison à périmètre égal). */
 function upTo(s, limit) {
@@ -510,9 +510,9 @@ function bilanCompare() {
 
   const maxT = Math.max(...TYPE_KEYS.flatMap(k => [A.byType[k], B.byType[k]]), 1);
   const w = v => `${(v / maxT * 100).toFixed(1)}%`;
-  const types = TYPE_KEYS.map(k => `<div class="cmp"><div class="cmp-h"><span><i class="cdot" style="background:${TYPES[k].color}"></i>${TYPES[k].label}</span>${deltaHTML(A.byType[k], B.byType[k])}</div>
-    <div class="cmp-b"><small>${cn}</small><div class="pbar"><i style="background:${TYPES[k].color}" data-p="${w(A.byType[k])}"></i></div><b>${eur(A.byType[k])}</b></div>
-    <div class="cmp-b prev"><small>${pn}</small><div class="pbar"><i style="background:${TYPES[k].color};opacity:.38" data-p="${w(B.byType[k])}"></i></div><b>${eur(B.byType[k])}</b></div></div>`).join('');
+  const types = TYPE_KEYS.map(k => `<div class="cmp"><div class="cmp-h"><span><i class="cdot" style="background:${fill(TYPES[k].color)}"></i>${TYPES[k].label}</span>${deltaHTML(A.byType[k], B.byType[k])}</div>
+    <div class="cmp-b"><small>${cn}</small><div class="pbar"><i style="background:${fill(TYPES[k].color)}" data-p="${w(A.byType[k])}"></i></div><b>${eur(A.byType[k])}</b></div>
+    <div class="cmp-b prev"><small>${pn}</small><div class="pbar"><i style="background:${fill(TYPES[k].color)};opacity:.38" data-p="${w(B.byType[k])}"></i></div><b>${eur(B.byType[k])}</b></div></div>`).join('');
 
   const bl = st.budgets.map(b => ({ b, a: A.byBudget[b.id] || 0, p: B.byBudget[b.id] || 0 })).filter(x => x.a || x.p);
   const budgetsRows = bl.length ? `<section class="card"><div class="card-h"><h3>Par budget</h3></div><div class="rows">${bl.map(x =>
@@ -622,6 +622,7 @@ function settings() {
     ${listBlock('fixed', 'Dépenses fixes', st.fixed, 'Aucune dépense fixe.')}
     ${listBlock('budget', 'Budgets mensuels', st.budgets, 'Aucun budget.')}
     ${listBlock('goal', 'Objectifs et cagnottes', st.goals, 'Aucun objectif.')}
+    <section class="card"><div class="card-h"><h3>Affichage</h3></div><div class="rows"><button class="row" data-act="toggle-patterns"><span class="grow"><b>Motifs sur les couleurs</b><small>Rayures, points, quadrillage : aide à distinguer les catégories (daltonisme)</small></span><span class="link">${st.patterns === false ? 'Désactivés' : 'Activés'}</span></button></div></section>
     <section class="card"><div class="card-h"><h3>Données</h3></div>
       <p class="store" id="persist">Vérification du stockage…</p>
       <div class="rows"><button class="row" data-act="export"><span class="grow"><b>Sauvegarder sur mon téléphone</b><small>${st.lastBackup ? `Dernière sauvegarde : ${cap(new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(parseISO(st.lastBackup)))}` : 'Jamais sauvegardé'} · fichier à enregistrer dans Fichiers / Drive</small></span></button>
@@ -650,6 +651,7 @@ function snap() {
 function render({ soft = false } = {}) {
   snap();
   const st = S.get();
+  document.documentElement.dataset.pat = st.patterns === false ? 'off' : 'on';
   const y = view.scrollTop, wy = window.scrollY;
   view.classList.toggle('soft', soft);
   if (!st.onboarded) {
@@ -702,6 +704,7 @@ const ACTIONS = {
     render({ soft: true });
     toast(r === 'shared' ? 'Sauvegarde envoyée' : 'Sauvegarde téléchargée');
   },
+  'toggle-patterns': () => { S.update(st => { st.patterns = st.patterns === false; }); render({ soft: true }); },
   'backup-later': () => { S.update(st => { st.backupSnooze = iso(new Date(Date.now() + 7 * 864e5)); }); render({ soft: true }); },
   'reset-filters': () => { ui.q = ''; ui.filter = 'all'; ui.fbudget = 'all'; render({ soft: true }); },
   fbudget: a => { ui.fbudget = a.dataset.v; render({ soft: true }); },

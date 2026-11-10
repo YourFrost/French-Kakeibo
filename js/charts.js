@@ -2,13 +2,34 @@
 // kick() déclenche ensuite les animations (anneaux, barres, courbes, compteurs).
 import { TYPES, TYPE_KEYS, eur } from './calc.js';
 
+/* ---------- Couleurs + motifs (accessibilité daltonisme) ---------- */
+const KEYS = { 'var(--besoin)': 'besoin', 'var(--plaisir)': 'plaisir', 'var(--imprevu)': 'imprevu', 'var(--c-fix)': 'fix', 'var(--c-bud)': 'bud', 'var(--c-sav)': 'sav', 'var(--c-free)': 'free' };
+const PATTERNED = new Set(['plaisir', 'imprevu', 'bud', 'sav']);
+/** Fond HTML (couleur + motif) pour une couleur de catégorie. */
+export const fill = col => KEYS[col] ? `var(--fill-${KEYS[col]})` : col;
+/** Peinture SVG : motif défini dans <defs> pour les catégories à motif, sinon la couleur. ctx 'r' = anneaux (échelle réduite). */
+export const paint = (col, ctx = '') => (KEYS[col] && PATTERNED.has(KEYS[col])) ? `url(#p-${KEYS[col]}${ctx})` : col;
+
+function patternDefs() {
+  const base = (id, k, color, inner, extra = '') => `<pattern id="${id}" width="${6 * k}" height="${6 * k}" patternUnits="userSpaceOnUse" ${extra}><rect width="${6 * k}" height="${6 * k}" style="fill:${color}"/>${inner}</pattern>`;
+  const one = (k, ctx) => [
+    base(`p-plaisir${ctx}`, k, 'var(--plaisir)', `<rect width="${2.6 * k}" height="${6 * k}" style="fill:#fff;opacity:var(--pat-a)"/>`, 'patternTransform="rotate(45)"'),
+    base(`p-imprevu${ctx}`, k, 'var(--imprevu)', `<circle cx="${3 * k}" cy="${3 * k}" r="${1.35 * k}" style="fill:#fff;opacity:var(--pat-a)"/>`),
+    base(`p-bud${ctx}`, k, 'var(--c-bud)', `<rect width="${2 * k}" height="${6 * k}" style="fill:#0a1e3c;opacity:var(--pat-a)"/>`),
+    base(`p-sav${ctx}`, k, 'var(--c-sav)', `<path d="M0 0L${6 * k} ${6 * k}M${6 * k} 0L0 ${6 * k}" stroke="#fff" stroke-width="${1.3 * k}" fill="none" style="opacity:var(--pat-a)"/>`),
+  ].join('');
+  if (document.getElementById('pattern-defs')) return;
+  document.body.insertAdjacentHTML('afterbegin', `<svg id="pattern-defs" width="0" height="0" style="position:absolute" aria-hidden="true"><defs>${one(1, '')}${one(0.45, 'r')}</defs></svg>`);
+}
+patternDefs();
+
 /** Anneau multi-segments. parts: [{ v: fraction 0-1, color }] */
 export function ring(parts, { size = 220, stroke = 14, over = false, children = '' } = {}) {
   let off = 0;
   const segs = parts.filter(p => p.v > 0).map(p => {
-    const len = Math.min(p.v * 100, 100 - off);
-    const s = `<circle class="seg" cx="50" cy="50" r="42" pathLength="100" stroke="${over ? 'var(--bad)' : p.color}"
-      stroke-width="${stroke / size * 100}" opacity="${p.o ?? 1}" stroke-dasharray="0 100" stroke-dashoffset="${-off}" data-dash="${len.toFixed(3)} ${(100 - len).toFixed(3)}"/>`;
+    const len = Math.min(p.v * 100, 100 - off), g = Math.min(0.5, len * 0.3);   // petit espace entre les blocs
+    const s = `<circle class="seg" cx="50" cy="50" r="42" pathLength="100" stroke="${over ? 'var(--bad)' : paint(p.color, 'r')}"
+      stroke-width="${stroke / size * 100}" opacity="${p.o ?? 1}" stroke-dasharray="0 100" stroke-dashoffset="${-(off + g / 2)}" data-dash="${(len - g).toFixed(3)} ${(100 - len + g).toFixed(3)}"/>`;
     off += len; return s;
   }).join('');
   return `<div class="ring" style="width:${size}px;height:${size}px">
@@ -20,7 +41,7 @@ export function ring(parts, { size = 220, stroke = 14, over = false, children = 
 export function stackBar(parts) {
   const total = parts.reduce((t, p) => t + Math.max(0, p.v), 0) || 1;
   return `<div class="hbar">${parts.filter(p => p.v > 0).map(p =>
-    `<span style="background:${p.color}" data-w="${(p.v / total * 100).toFixed(2)}%"></span>`).join('')}</div>`;
+    `<span style="background:${fill(p.color)}" data-w="${(p.v / total * 100).toFixed(2)}%"></span>`).join('')}</div>`;
 }
 
 /** Barres journalières empilées par type. */
@@ -34,7 +55,7 @@ export function bars(daily) {
       const h = d[t] / max * (H - 6);
       if (!h) return '';
       y -= h;
-      return `<rect x="${(i * (bw + gap)).toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${TYPES[t].color}" rx="${Math.min(3, bw / 2)}"/>`;
+      return `<rect x="${(i * (bw + gap)).toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${paint(TYPES[t].color)}" rx="${Math.min(3, bw / 2)}"/>`;
     }).join('');
     const stub = tot[i] ? '' : `<rect x="${(i * (bw + gap)).toFixed(2)}" y="${H - 2}" width="${bw.toFixed(2)}" height="2" rx="1" fill="var(--line)"/>`;
     return `<g class="bar" style="transition-delay:${i * 16}ms">${rects}${stub}</g>`;
@@ -76,7 +97,7 @@ export function yearBars(months, budget) {
       const h = m[t] / max * H;
       if (!h) return '';
       y -= h;
-      return `<rect x="${(i * col + gap / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${TYPES[t].color}"/>`;
+      return `<rect x="${(i * col + gap / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" fill="${paint(TYPES[t].color)}"/>`;
     }).join('');
     const stub = tot[i] ? '' : `<rect x="${(i * col + gap / 2).toFixed(2)}" y="${H - 2}" width="${bw.toFixed(2)}" height="2" rx="1" fill="var(--line)"/>`;
     return `<g class="bar" style="transition-delay:${i * 45}ms">${rects}${stub}</g>`;
@@ -101,7 +122,7 @@ export function compareLines(cur, prev) {
 }
 
 export function legend(byType, total) {
-  return `<ul class="legend">${TYPE_KEYS.map(t => `<li><i style="background:${TYPES[t].color}"></i><span>${TYPES[t].label}</span>
+  return `<ul class="legend">${TYPE_KEYS.map(t => `<li><i style="background:${fill(TYPES[t].color)}"></i><span>${TYPES[t].label}</span>
     <b>${eur(byType[t])}</b><small>${total ? Math.round(byType[t] / total * 100) : 0} %</small></li>`).join('')}</ul>`;
 }
 

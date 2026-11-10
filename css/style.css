@@ -1,7 +1,18 @@
 :root {
   --bg: #f6f3ee; --card: #ffffff; --ink: #1d2130; --muted: #8b8f9b; --line: #ece7df; --soft: #f1ede6;
-  --accent: #5b6cf0; --besoin: #5b8cff; --plaisir: #ff7d92; --imprevu: #ffb938;
-  --fixed: #a9b0c4; --save: #34c79a; --bad: #ef5350; --good: #2fb384;
+  --accent: #5b6cf0;
+  /* Palette Okabe-Ito : lisible pour tous les types de daltonisme (bleu / orange / rose-violet) */
+  --besoin: #0072B2; --plaisir: #E69F00; --imprevu: #CC79A7;
+  --c-fix: #5b6272; --c-bud: #56B4E9; --c-sav: #009E73; --c-free: #F0E442;
+  --fixed: #5b6272; --save: #009E73; --bad: #D55E00; --good: #009E73;
+  --pat-a: .55;   /* intensité des motifs (0 = désactivés) */
+  --fill-besoin: var(--besoin);
+  --fill-plaisir: repeating-linear-gradient(45deg, rgba(255,255,255,var(--pat-a)) 0 3px, transparent 3px 7px), var(--plaisir);
+  --fill-imprevu: radial-gradient(rgba(255,255,255,var(--pat-a)) 1.4px, transparent 1.9px) 0 0 / 6px 6px, var(--imprevu);
+  --fill-fix: var(--c-fix);
+  --fill-bud: repeating-linear-gradient(90deg, rgba(10,30,60,var(--pat-a)) 0 2px, transparent 2px 6px), var(--c-bud);
+  --fill-sav: repeating-linear-gradient(45deg, rgba(255,255,255,var(--pat-a)) 0 2px, transparent 2px 6px), repeating-linear-gradient(-45deg, rgba(255,255,255,var(--pat-a)) 0 2px, transparent 2px 6px), var(--c-sav);
+  --fill-free: var(--c-free);
   --shadow: 0 1px 2px rgba(40,30,10,.04), 0 10px 30px -12px rgba(40,30,10,.12);
   --r: 24px; --ease: cubic-bezier(.2,.8,.2,1);
   --nav-h: 76px;
@@ -10,7 +21,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #14161c; --card: #1d2029; --ink: #eef0f6; --muted: #8d93a3; --line: #2a2e3a; --soft: #252935;
-    --accent: #8896ff; --besoin: #6f9bff; --plaisir: #ff8fa3; --imprevu: #ffc656; --fixed: #5d6479; --save: #3fd3a6;
+    --accent: #8896ff; --besoin: #4FA8E8; --plaisir: #F2B134; --imprevu: #E69BC6; --c-fix: #8A93A8; --c-bud: #6CC4F4; --c-sav: #2FC9A0; --c-free: #F3E85A;
+    --fixed: #8A93A8; --save: #2FC9A0; --bad: #F2823A; --good: #2FC9A0;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 14px 30px -14px rgba(0,0,0,.6);
     color-scheme: dark;
   }
@@ -147,9 +159,7 @@ button.row:active { background: var(--soft); transform: scale(.985); }
 /* --- Notes --- */
 .notes { display: flex; flex-direction: column; gap: 10px; }
 .note { display: flex; gap: 12px; padding: 12px 14px; border-radius: 16px; background: var(--soft); font-size: 14.5px; line-height: 1.45; }
-.note i { width: 4px; border-radius: 4px; background: var(--accent); flex: none; }
-.note.good i { background: var(--good); } .note.warn i { background: var(--imprevu); }
-.note.warn { background: color-mix(in srgb, var(--imprevu) 12%, var(--card)); }
+.note.warn { background: color-mix(in srgb, var(--plaisir) 14%, var(--card)); }
 .note.good { background: color-mix(in srgb, var(--good) 11%, var(--card)); }
 .kk .q { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 14.5px; }
 .kk .q:first-of-type { border-top: 0; }
@@ -310,7 +320,7 @@ em.rank { font-style: normal; font-size: 11px; font-weight: 700; color: var(--pl
 #toast { max-width: calc(100% - 32px); white-space: normal; text-align: center; }
 
 /* --- Reste du mois avec budgets, prénom, comparaisons --- */
-:root { --c-fix: #a3abc2; --c-bud: #6574f0; --c-sav: #34c79a; --c-free: #4fc3e8; --reserve: color-mix(in srgb, var(--accent) 30%, var(--card)); }
+:root { --reserve: color-mix(in srgb, var(--accent) 30%, var(--card)); }
 .ringkey { display: flex; justify-content: center; gap: 6px 14px; flex-wrap: wrap; margin-top: 18px; font-size: 12.5px; color: var(--muted); }
 .ringkey span { display: flex; align-items: center; gap: 6px; }
 .ringkey b { color: var(--ink); font-weight: 650; }
@@ -383,7 +393,6 @@ em.rank { font-style: normal; font-size: 11px; font-weight: 700; color: var(--pl
 .amount.sel .amt-v { color: var(--accent); }
 
 /* --- Anneau : 4 parts du revenu --- */
-@media (prefers-color-scheme: dark) { :root { --c-fix: #6b7391; --c-bud: #8896ff; --c-sav: #3fd3a6; --c-free: #62d0f2; } }
 .alloc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 18px; text-align: left; }
 .al { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
 .al i { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 5px; }
@@ -393,5 +402,32 @@ em.rank { font-style: normal; font-size: 11px; font-weight: 700; color: var(--pl
 .al span { font-size: 11.5px; color: var(--muted); }
 .link.reset { margin: -4px 0 12px; padding-left: 2px; }
 .faded-note { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 14px; font-size: 12px; color: var(--muted); }
-.faded-note i { width: 22px; height: 8px; border-radius: 4px; background: var(--c-bud); opacity: .3; }
+.faded-note i { width: 22px; height: 8px; border-radius: 4px; background: var(--fill-bud); opacity: .42; }
 .faded-note + .alloc { margin-top: 12px; }
+
+/* --- Accessibilité : motifs, symboles --- */
+html[data-pat="off"] { --pat-a: 0; }
+.chip .cdot { margin-right: 7px; width: 10px; height: 10px; }
+.chip.on, .chip.on:not([style]) { background: var(--ink); color: var(--bg); }
+.tcard i { background: none; }
+em.rank { color: var(--ink); background: color-mix(in srgb, var(--plaisir) 28%, transparent); }
+.note { align-items: flex-start; }
+.note .ni { width: 22px; height: 22px; flex: none; display: grid; place-items: center; font-style: normal; font-weight: 800; font-size: 13px; line-height: 1; margin-top: 1px; background: var(--accent); color: #fff; border-radius: 7px; }
+.note.good .ni { background: var(--good); border-radius: 50%; }
+.note.warn .ni { background: var(--plaisir); color: #1d2130; border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); align-items: end; padding-top: 6px; font-size: 12px; }
+.note.info .ni { background: var(--c-fix); border-radius: 7px; }
+.delta { letter-spacing: -.01em; }
+.bud .pbar i { background: var(--fill-bud); }
+.bud.warn .pbar i { background: var(--fill-plaisir); }
+.bud.over .pbar i { background: repeating-linear-gradient(45deg, rgba(255,255,255,.6) 0 3px, transparent 3px 7px), var(--bad); }
+.bud .st { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
+.bud.over small:last-child, .bud.warn small:last-child { color: var(--ink); }
+.pbar.plais i { background: var(--fill-plaisir); }
+.pbar.thin i { background: var(--fill-bud); }
+.alloc .al i, .legend i, .ringkey i { background-clip: padding-box; }
+
+/* Pastilles de légende en carrés plus grands : les motifs restent visibles */
+.legend i, .al i, .ringkey i { width: 15px; height: 15px; border-radius: 4px; flex: none; }
+.al i { margin-top: 3px; }
+.legend li { grid-template-columns: 15px 1fr auto auto; }
+.legend.flat li { grid-template-columns: 15px 1fr auto; }
