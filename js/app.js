@@ -1,5 +1,5 @@
 import * as S from './store.js';
-import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, insights, goalMonthly, monthsLeft, curYM as curYMc, periodOfDate, periodRange, capture } from './calc.js';
+import { TYPES, TYPE_KEYS, FIXED_CATS, FIXED_PRESETS, BUDGET_IDEAS, fmtMonth, eur, iso, parseISO, summary, insights, allocation, goalMonthly, monthsLeft, curYM as curYMc, periodOfDate, periodRange, capture } from './calc.js';
 import { ring, stackBar, bars, line, legend, yearBars, compareLines, kick } from './charts.js';
 import { openSheet, esc, toast } from './ui.js';
 
@@ -243,7 +243,7 @@ function closureInfo(st) {
 function closureCard(s) {
   const cl = S.get().closures[s.key];
   const goalName = id => (S.get().goals.find(g => g.id === id) || { label: 'cagnotte supprimée' }).label;
-  const lines = cl ? cl.allocations.map(a => `<div class="row static"><span class="grow"><b>${a.to === 'carry' ? 'Reporté au mois suivant' : `Cagnotte · ${esc(goalName(a.to))}`}</b></span><span class="amt">${eur(a.amount)}</span></div>`).join('') : '';
+  const lines = cl ? cl.allocations.map(a => `<div class="row static"><span class="grow"><b>${a.to === 'carry' ? 'Reporté au mois suivant' : a.to === 'plan' ? 'Épargne versée sur tes objectifs' : `Cagnotte · ${esc(goalName(a.to))}`}</b></span><span class="amt">${eur(a.amount)}</span></div>`).join('') : '';
   const left = s.remaining - (cl ? sum(cl.allocations, a => a.amount) : 0);
   const can = s.isPast && !(cl && cl.done) && left >= 1 && s.items.length;
   if (!lines && !can) return '';
@@ -256,24 +256,39 @@ function openClosure(key) {
   const left = s.remaining - (cl ? sum(cl.allocations, a => a.amount) : 0);
   if (left < 1) return;
   const goals = st.goals.filter(g => (g.saved || 0) < g.target);
+  // Budget tenu : il reste au moins l'épargne prévue → on propose de la verser sur les objectifs.
+  const offerPlan = s.savings >= 1 && goals.length > 0 && left >= s.savings && !(cl && cl.allocations.some(a => a.to === 'plan'));
   openSheet({
     title: `Fin de ${mLong(y, mo - 1)}`,
-    message: `Il te reste <b>${eur(left)}</b> de budget non dépensé. Où veux-tu le mettre ?`,
+    message: offerPlan
+      ? `Budget tenu 🎉 Ton épargne prévue (<b>${eur(s.savings)}</b>) peut être versée sur tes objectifs. Il te reste <b>${eur(left)}</b> au total.`
+      : `Il te reste <b>${eur(left)}</b> de budget non dépensé. Où veux-tu le mettre ?`,
     fields: [
-      { name: 'amount', type: 'money', keypad: true, value: Math.round(left * 100) / 100 },
-      { name: 'dest', label: 'Destination', type: 'choice', value: 'carry', options: [{ value: 'carry', label: 'Mois suivant' }, ...goals.map(g => ({ value: g.id, label: `Cagnotte · ${g.label}` }))] },
+      { name: 'amount', type: 'money', keypad: true, value: Math.round((offerPlan ? s.savings : left) * 100) / 100 },
+      { name: 'dest', label: 'Destination', type: 'choice', value: offerPlan ? 'plan' : 'carry', options: [
+        ...(offerPlan ? [{ value: 'plan', label: 'Épargne prévue' }] : []), { value: 'carry', label: 'Mois suivant' },
+        ...goals.map(g => ({ value: g.id, label: `Cagnotte · ${g.label}` }))] },
     ],
     submitLabel: 'Affecter', deleteLabel: 'Garder, ne rien reporter',
     onSubmit: v => {
-      const amt = Math.min(v.amount, left);
+      let amt = Math.min(v.amount, left);
       S.update(d => {
         const c = (d.closures[key] ||= { done: false, allocations: [] });
-        c.allocations.push({ to: v.dest, amount: amt });
-        if (v.dest !== 'carry') { const g = d.goals.find(x => x.id === v.dest); if (g) g.saved = (g.saved || 0) + amt; }
-        if (left - amt < 1) c.done = true;
+        const alloc = { to: v.dest, amount: amt };
+        if (v.dest === 'plan') {   // répartition selon le besoin mensuel de chaque objectif
+          const gs = d.goals.filter(g => (g.saved || 0) < g.target);
+          const needs = gs.map(g => goalMonthly(g, now()) || 0), tot = sum(needs, n => n);
+          alloc.split = gs.map((g, i) => ({ id: g.id, amount: Math.min(g.target - (g.saved || 0), tot ? amt * needs[i] / tot : (i ? 0 : amt)) })).filter(x => x.amount > 0);
+          alloc.split.forEach(x => { const g = d.goals.find(z => z.id === x.id); g.saved = (g.saved || 0) + x.amount; });
+          alloc.amount = amt = sum(alloc.split, x => x.amount);
+        } else if (v.dest !== 'carry') {
+          const g = d.goals.find(x => x.id === v.dest); if (g) g.saved = (g.saved || 0) + amt;
+        }
+        c.allocations.push(alloc);
+        if (left - alloc.amount < 1) c.done = true;
       });
       render({ soft: true });
-      toast(v.dest === 'carry' ? `${eur(amt)} reportés sur le mois suivant` : `${eur(amt)} ajoutés à la cagnotte`);
+      toast(v.dest === 'carry' ? `${eur(amt)} reportés sur le mois suivant` : v.dest === 'plan' ? `${eur(amt)} versés sur tes objectifs` : `${eur(amt)} ajoutés à la cagnotte`);
     },
     onDelete: () => { S.update(d => { (d.closures[key] ||= { done: false, allocations: [] }).done = true; }); render({ soft: true }); },
   });
@@ -292,7 +307,7 @@ function banners(st) {
   const b = [];
   if (reminderDue(st)) b.push(`<section class="card banner"><div><b>Tes dépenses du jour ?</b><small>Rien de noté aujourd’hui.</small></div><div class="bn-act"><button class="mini" data-act="add-expense">Ajouter</button><button class="link" data-act="skip-today">Rien aujourd’hui</button></div></section>`);
   const cl = closureInfo(st);
-  if (cl) b.push(`<section class="card banner accent"><div><b>${eur(cl.left)} non dépensés en ${mLong(cl.pv.y, cl.pv.m)}</b><small>Reporte-les au mois suivant ou mets-les dans une cagnotte.</small></div><div class="bn-act"><button class="mini" data-act="closure" data-key="${cl.pv.key}">Choisir</button></div></section>`);
+  if (cl) b.push(`<section class="card banner accent"><div><b>Fin de ${mLong(cl.pv.y, cl.pv.m)} : ${eur(cl.left)} restants</b><small>Verse ton épargne, reporte le reste ou mets-le en cagnotte.</small></div><div class="bn-act"><button class="mini" data-act="closure" data-key="${cl.pv.key}">Choisir</button></div></section>`);
   if (backupDue(st)) b.push(`<section class="card banner"><div><b>Pense à sauvegarder tes données</b><small>${st.lastBackup ? `Dernière sauvegarde il y a ${daysSince(st.lastBackup)} jours.` : 'Aucune sauvegarde pour l’instant.'}</small></div><div class="bn-act"><button class="mini" data-act="export">Sauvegarder</button><button class="link" data-act="backup-later">Plus tard</button></div></section>`);
   return b.slice(0, 2).join('');
 }
@@ -300,13 +315,26 @@ function banners(st) {
 function notes(list) {
   return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i></i><p>${n.text}</p></div>`).join('')}</div>`;
 }
-function ringParts(s) {
-  if (s.budget <= 0) return { parts: [{ v: s.spent > 0 ? 1 : 0 }], over: true };
-  const over = s.remaining < 0;
-  const scale = over ? 1 / (s.spent / s.budget) : 1;
-  const parts = TYPE_KEYS.map(t => ({ v: s.byType[t] / s.budget * scale, color: TYPES[t].color }));
-  if (!over && s.reserved > 0) parts.push({ v: s.reserved / s.budget, color: 'var(--reserve)' });
-  return { over, parts };
+/** Parts de l'anneau : la partie déjà consommée de chaque bloc est estompée, la partie restante est pleine. */
+function allocParts(al) {
+  if (al.P <= 0) return [];
+  const seg = (used, total, color) => [{ v: Math.min(used, total) / al.P, color, o: 0.3 }, { v: Math.max(0, total - used) / al.P, color }];
+  return [...seg(al.usedF, al.F, 'var(--c-fix)'), ...seg(al.usedB, al.B, 'var(--c-bud)'), ...seg(al.eroded, al.S, 'var(--c-sav)'), ...seg(al.usedR, al.R, 'var(--c-free)')];
+}
+function legendAlloc(s, al) {
+  const rows = [
+    ['var(--c-fix)', 'Prélèvements', al.F, `${eur(Math.max(0, al.F - al.usedF))} à prélever`],
+    ['var(--c-bud)', 'Budgets', al.B, `${eur(Math.max(0, al.B - al.usedB))} restants`],
+    ['var(--c-sav)', 'Épargne visée', al.S, al.eroded > 0 ? `${eur(al.eroded)} entamés` : 'versée si budget tenu'],
+    ['var(--c-free)', 'Reste libre', al.R, `${eur(Math.max(0, al.R - al.usedR))} disponibles`],
+  ].filter(r => r[2] > 0);
+  return `<p class="faded-note"><i></i>Partie estompée = déjà prélevée ou dépensée</p><div class="alloc">${rows.map(([c, l, a, sub]) => `<div class="al"><i style="background:${c}"></i><div><small>${l}</small><b>${eur(a)}</b><span>${sub}</span></div></div>`).join('')}</div>`;
+}
+/** Barre + légende des 4 parts du revenu (Bilan, récapitulatif). */
+function allocBar(s) {
+  const al = allocation(s);
+  const rows = [['var(--c-fix)', 'Prélèvements', al.F], ['var(--c-bud)', 'Budgets', al.B], ['var(--c-sav)', 'Épargne visée', al.S], ['var(--c-free)', 'Reste libre', al.R]];
+  return `${stackBar(rows.map(r => ({ v: r[2], color: r[0] })))}<ul class="legend flat">${rows.map(([c, l, v]) => `<li><i style="background:${c}"></i><span>${l}</span><b>${eur(v)}</b></li>`).join('')}</ul>`;
 }
 const fmtD = d => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(d);
 const monthNav = () => {
@@ -343,8 +371,7 @@ function onboarding() {
     body = `<h1>Ton budget</h1><p class="lead">Voici la situation calculée pour ton mois.</p>
       <section class="card hero-sum"><small>Reste à vivre / mois</small><div class="big ${s.budget < 0 ? 'neg' : ''}" data-count="${s.budget}">${eur(0)}</div>
       <p class="sub">soit environ <b>${eur(Math.max(0, s.budget) / s.dim)}</b> par jour</p>
-      ${stackBar([{ v: s.fixed, color: 'var(--fixed)' }, { v: s.savings, color: 'var(--save)' }, { v: Math.max(0, s.budget), color: 'var(--accent)' }])}
-      <ul class="legend flat"><li><i style="background:var(--fixed)"></i><span>Charges fixes</span><b>${eur(s.fixed)}</b></li><li><i style="background:var(--save)"></i><span>Épargne</span><b>${eur(s.savings)}</b></li><li><i style="background:var(--accent)"></i><span>À dépenser</span><b>${eur(Math.max(0, s.budget))}</b></li></ul></section>
+      ${allocBar(s)}</section>
       <section class="card"><div class="card-h"><h3>Notes</h3></div>${notes(insights(st, s).slice(0, 4))}</section>
       <div class="ob-foot"><button class="btn primary" data-act="ob-finish">Lancer mon Kakeibo</button></div>`;
   }
@@ -355,15 +382,16 @@ function onboarding() {
 function home() {
   const st = S.get(), t = now(), c = curYM();
   const s = summary(st, c.y, c.m, t);
-  const { parts, over } = ringParts(s);
+  const al = allocation(s), parts = allocParts(al), over = false;
   const date = cap(new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(t));
   return `<div class="page stagger">
     <header class="top"><div><small>${date}</small><h1>Bonjour${st.name ? ' ' + esc(st.name) : ''} 👋</h1></div><button class="icon-btn" data-act="tab" data-v="settings" aria-label="Réglages">${ICON.gear}</button></header>
     ${banners(st)}
     <section class="card hero">
       ${ring(parts, { over, size: 232, stroke: 15, children: `<small>${s.remaining < 0 ? 'Dépassement' : 'Reste ce mois'}</small><div class="big ${s.remaining < 0 ? 'neg' : ''}" data-count="${Math.abs(s.remaining)}">${eur(0)}</div><small>sur ${eur(Math.max(0, s.budget))}</small>` })}
-      ${s.budgets.length && s.budget > 0 ? `<div class="ringkey"><span><i style="background:conic-gradient(var(--besoin) 0 33%, var(--plaisir) 0 66%, var(--imprevu) 0)"></i>Dépensé <b>${eur(s.spent)}</b></span><span><i style="background:var(--reserve)"></i>Budgets à venir <b>${eur(s.reserved)}</b></span><span><i class="free"></i>Libre <b>${eur(Math.max(0, s.free))}</b></span></div>` : ''}
-      <p class="pace">${s.remaining > 0 ? `Tu peux dépenser <b>${eur(s.perDay)}</b> par jour · ${s.daysLeft} j restants` : s.budget <= 0 ? 'Revois tes charges ou tes objectifs dans les réglages.' : 'Budget du mois épuisé — seulement l’essentiel !'}</p>
+      ${legendAlloc(s, al)}
+      <p class="pace">${s.remaining > 0 ? `Tu peux dépenser <b>${eur(s.perDay)}</b> par jour · ${s.daysLeft} j restants` : s.budget <= 0 ? 'Revois tes charges dans les réglages.' : 'Budget du mois épuisé — seulement l’essentiel !'}
+        ${s.remaining > 0 && s.daysLeft && al.S > 0 ? `<br><small>ou <b>${eur(Math.max(0, s.remaining - al.S) / s.daysLeft)}</b> par jour pour garder ton épargne de ${eur(al.S)}</small>` : ''}</p>
     </section>
     <section class="types">${TYPE_KEYS.map(k => `<div class="tcard" style="--c:${TYPES[k].color}"><i></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
     ${budgetsCard(s, true)}
@@ -385,8 +413,8 @@ function journalRows(s) {
     if (q && !`${e.label || ''} ${bname(e.budget)} ${TYPES[e.type].label} ${String(e.amount).replace('.', ',')}`.toLowerCase().includes(q)) return;
     rows.push({ kind: 'exp', date: e.date, e, bname: bname(e.budget) });
   });
-  if ((f === 'all' || f === 'debit') && fb === 'all') {
-    s.debits.filter(d => d.done && (!q || d.label.toLowerCase().includes(q) || 'prélèvement rentrée'.includes(q))).forEach(d => rows.push({ kind: 'deb', date: iso(d.date), d }));
+  if ((f === 'all' || f === 'debit' || f === 'income') && fb === 'all') {
+    s.debits.filter(d => d.done && (f === 'all' || (f === 'debit' && d.kind === 'fixed') || (f === 'income' && d.kind === 'income')) && (!q || d.label.toLowerCase().includes(q) || 'prélèvement rentrée'.includes(q))).forEach(d => rows.push({ kind: 'deb', date: iso(d.date), d }));
   }
   return rows.sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -406,7 +434,8 @@ function journalList() {
 function journal() {
   const s = sumView(), st = S.get(), f = ui.filter;
   const chip = (act, v, label, on, color) => `<button class="chip${on ? ' on' : ''}" ${color ? `style="--c:${color}"` : ''} data-act="${act}" data-v="${v}">${esc(label)}</button>`;
-  const types = [chip('filter', 'all', 'Tout', f === 'all'), ...TYPE_KEYS.map(k => chip('filter', k, TYPES[k].label, f === k, TYPES[k].color)), chip('filter', 'debit', 'Prélèvements', f === 'debit')].join('');
+  const types = [chip('filter', 'all', 'Tout', f === 'all'), ...TYPE_KEYS.map(k => chip('filter', k, TYPES[k].label, f === k, TYPES[k].color)), chip('filter', 'debit', 'Prélèvements', f === 'debit'), chip('filter', 'income', 'Rentrées', f === 'income')].join('');
+  const active = ui.q || f !== 'all' || ui.fbudget !== 'all';
   const buds = st.budgets.length ? `<div class="chips sub">${[chip('fbudget', 'all', 'Tous budgets', ui.fbudget === 'all'), ...st.budgets.map(b => chip('fbudget', b.id, b.label, ui.fbudget === b.id)), chip('fbudget', 'none', 'Sans budget', ui.fbudget === 'none')].join('')}</div>` : '';
   return `<div class="page stagger">
     <header class="top"><h1>Journal</h1><button class="link" data-act="csv">Exporter CSV</button></header>${monthNav()}
@@ -414,6 +443,7 @@ function journal() {
       ${stackBar(TYPE_KEYS.map(k => ({ v: s.byType[k], color: TYPES[k].color })))}</section>
     <div class="search">${ICON.search}<input id="q" type="search" placeholder="Rechercher (note, budget, montant…)" value="${esc(ui.q)}" autocomplete="off"></div>
     <div class="chips">${types}</div>${buds}
+    ${active ? '<button class="link reset" data-act="reset-filters">✕ Réinitialiser les filtres</button>' : ''}
     <div id="jlist">${journalList()}</div>
   </div>`;
 }
@@ -434,8 +464,7 @@ function bilanMonth() {
   return `${monthNav()}
     ${closureCard(s)}
     <section class="card"><div class="card-h"><h3>Répartition de ton revenu</h3></div>
-      ${stackBar([{ v: s.fixed, color: 'var(--fixed)' }, { v: s.savings, color: 'var(--save)' }, { v: Math.max(0, s.budget), color: 'var(--accent)' }])}
-      <ul class="legend flat"><li><i style="background:var(--fixed)"></i><span>Charges fixes</span><b>${eur(s.fixed)}</b></li><li><i style="background:var(--save)"></i><span>Épargne</span><b>${eur(s.savings)}</b></li><li><i style="background:var(--accent)"></i><span>À dépenser</span><b>${eur(Math.max(0, s.budget))}</b></li></ul></section>
+      ${allocBar(s)}</section>
     ${fixedCatsCard(s)}
     ${budgetsCard(s, false)}
     <section class="card"><div class="card-h"><h3>Où part ton argent</h3></div>
@@ -674,6 +703,7 @@ const ACTIONS = {
     toast(r === 'shared' ? 'Sauvegarde envoyée' : 'Sauvegarde téléchargée');
   },
   'backup-later': () => { S.update(st => { st.backupSnooze = iso(new Date(Date.now() + 7 * 864e5)); }); render({ soft: true }); },
+  'reset-filters': () => { ui.q = ''; ui.filter = 'all'; ui.fbudget = 'all'; render({ soft: true }); },
   fbudget: a => { ui.fbudget = a.dataset.v; render({ soft: true }); },
   csv: async () => {
     const st = S.get(), s = sumView();

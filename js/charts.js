@@ -8,7 +8,7 @@ export function ring(parts, { size = 220, stroke = 14, over = false, children = 
   const segs = parts.filter(p => p.v > 0).map(p => {
     const len = Math.min(p.v * 100, 100 - off);
     const s = `<circle class="seg" cx="50" cy="50" r="42" pathLength="100" stroke="${over ? 'var(--bad)' : p.color}"
-      stroke-width="${stroke / size * 100}" stroke-dasharray="0 100" stroke-dashoffset="${-off}" data-dash="${len.toFixed(3)} ${(100 - len).toFixed(3)}"/>`;
+      stroke-width="${stroke / size * 100}" opacity="${p.o ?? 1}" stroke-dasharray="0 100" stroke-dashoffset="${-off}" data-dash="${len.toFixed(3)} ${(100 - len).toFixed(3)}"/>`;
     off += len; return s;
   }).join('');
   return `<div class="ring" style="width:${size}px;height:${size}px">

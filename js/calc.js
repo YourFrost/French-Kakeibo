@@ -91,6 +91,25 @@ function debitDate(day, start, end) {
   return null;
 }
 
+/**
+ * Répartition du revenu d'une période en 4 parts : prélèvements, budgets, épargne visée, reste libre.
+ * L'épargne n'est pas retirée du budget : les dépenses hors budget (et dépassements) mangent d'abord le reste libre,
+ * puis entament l'épargne visée (« eroded »).
+ */
+export function allocation(s) {
+  const P = s.income + s.carryIn, F = s.fixed;
+  const room = Math.max(0, P - F);
+  const B = Math.min(sum(s.budgets, b => b.amount), room);
+  const S = Math.min(s.savings, Math.max(0, room - B));
+  const R = Math.max(0, room - B - S);
+  const inBudgets = sum(s.budgets, b => b.spent);
+  const overflow = sum(s.budgets, b => Math.max(0, b.spent - b.amount));
+  const outside = (s.spent - inBudgets) + overflow;           // dépenses hors budget + dépassements de budgets
+  const usedR = Math.min(outside, R);
+  const eroded = Math.min(Math.max(0, outside - R), S);
+  return { P, F, B, S, R, usedF: Math.min(s.debited, F), usedB: Math.min(sum(s.budgets, b => Math.min(b.spent, b.amount)), B), usedR, eroded };
+}
+
 /** Photo de la situation (revenus, charges, budgets, épargne) pour figer l'historique. */
 export function capture(st, now = new Date()) {
   return {
@@ -140,7 +159,8 @@ export function summary(st, y, m, now = new Date()) {
   const prevClosure = (st.closures || {})[periodKey(pv.getFullYear(), pv.getMonth())];
   const carryIn = prevClosure ? sum(prevClosure.allocations.filter(a => a.to === 'carry'), a => a.amount) : 0;
 
-  const budget = income - fixed - savings + carryIn;      // budget "variable" de la période
+  // Budget "variable" : revenus - prélèvements. L'épargne n'est PAS soustraite d'office : elle n'est versée que si le budget est tenu.
+  const budget = income - fixed + carryIn;
   const spent = sum(TYPE_KEYS, t => byType[t]);
   const remaining = budget - spent;
   const reserved = budgets.reduce((t, b) => t + Math.max(0, b.amount - b.spent), 0); // part des budgets pas encore consommée
@@ -193,9 +213,10 @@ export function insights(st, s) {
   if (!s.income) return [{ tone: 'info', text: 'Ajoute au moins une rentrée d’argent pour obtenir des conseils personnalisés.' }];
 
   if (s.budget < 0) {
-    add('warn', `Tes charges fixes et tes objectifs dépassent tes revenus de ${eur(-s.budget)}. Allonge les délais de tes objectifs ou réduis une charge.`);
+    add('warn', `Tes charges fixes dépassent tes revenus de ${eur(-s.budget)}. Réduis une charge ou augmente tes rentrées.`);
   } else {
-    add('info', `Une fois les charges et l’épargne prévues, il te reste ${eur(s.budget)} par mois à dépenser, soit environ ${eur(s.budget / s.dim)} par jour.`);
+    add('info', `Après tes prélèvements, il te reste ${eur(s.budget)} à dépenser ce mois-ci${s.savings > 0 ? `, dont ${eur(Math.min(s.savings, s.budget))} à mettre de côté si tu tiens ton budget` : ''}.`);
+    if (s.budget < s.savings) add('warn', `Même sans rien dépenser, il manque ${eur(s.savings - s.budget)} pour atteindre ton épargne prévue. Allonge le délai d’un objectif.`);
   }
   if (s.carryIn > 0) add('good', `Tu as reporté ${eur(s.carryIn)} du mois dernier : ça gonfle ton budget de ce mois.`);
   const fixedShare = s.fixed / s.income;
@@ -213,6 +234,8 @@ export function insights(st, s) {
   }
 
   if (s.budget > 0) {
+    const al = allocation(s);
+    if (s.savings > 0 && al.eroded > 0) add('warn', `Tu entames ton épargne prévue : ${eur(al.eroded)} sur ${eur(al.S)} déjà dépensés. Elle ne sera versée que si le budget est tenu.`);
     if (s.remaining < 0) add('warn', `Tu as dépassé ton budget du mois de ${eur(-s.remaining)}. Garde seulement les besoins jusqu’à la fin du mois.`);
     else if (s.isCurrent && s.spent > 0) {
       if (s.spent > s.expected * 1.1) add('warn', `Tu dépenses plus vite que prévu : ${eur(s.spent - s.expected)} au-dessus du rythme idéal. Il te reste ${eur(s.perDay)} par jour.`);
