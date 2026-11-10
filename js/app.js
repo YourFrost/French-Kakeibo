@@ -178,7 +178,7 @@ function listBlock(kind, title, items, empty) {
     ${items.length ? `<div class="rows">${items.map(i => itemRow(kind, i)).join('')}</div>` : `<p class="empty-s">${empty}</p>`}</section>`;
 }
 function budgetsCard(s, add) {
-  const head = `<div class="card-h"><h3>Mes budgets</h3>${add ? '<button class="link" data-act="add-item" data-kind="budget">+ Ajouter</button>' : ''}</div>`;
+  const head = `<div class="card-h"><h3>Mes budgets</h3>${add ? '<button class="link" data-act="add-item" data-kind="budget">+ Ajouter</button>' : ''}</div>${add && s.budgets.length ? '<p class="cap2">Ta limite par poste. Ce que tu y dépenses est déjà compté dans « Dépensé ».</p>' : ''}`;
   if (!s.budgets.length) return add ? `<section class="card">${head}<p class="empty-s">Fixe-toi une limite par poste (courses, transport…) pour ne pas la dépasser.</p></section>` : '';
   return `<section class="card">${head}${s.budgets.map(b => {
     const r = b.spent / b.amount, cls = r > 1 ? 'over' : r >= 0.8 ? 'warn' : '';
@@ -295,11 +295,13 @@ function openClosure(key) {
 }
 function debitsCard(s) {
   if (!s.debits.length && !s.noDate.length) return '';
-  const up = s.debits.filter(d => !d.done), passed = s.debits.filter(d => d.done && d.kind === 'fixed');
+  const up = s.debits.filter(d => !d.done && d.kind === 'fixed'), passed = s.debits.filter(d => d.done && d.kind === 'fixed');
+  const nextIn = s.debits.find(d => !d.done && d.kind === 'income');
   const total = s.debited + s.toDebit;
   return `<section class="card"><div class="card-h"><h3>Prélèvements du mois</h3><small>${s.toDebit > 0 ? `Reste ${eur(s.toDebit)}` : 'Tout est passé'}</small></div>
-    ${total ? `<div class="pbar"><i data-p="${(s.debited / total * 100).toFixed(1)}%"></i></div><p class="deb-sum"><span>${eur(s.debited)} prélevés</span><span>${eur(s.toDebit)} à venir</span></p>` : ''}
+    ${total ? `<div class="pbar deb"><i data-p="${(s.debited / total * 100).toFixed(1)}%"></i></div><p class="deb-sum"><span>${eur(s.debited)} prélevés</span><span>${eur(s.toDebit)} à venir</span></p>` : ''}
     ${up.length ? `<div class="rows">${up.slice(0, 6).map(d => `<div class="row static"><span class="ico ${d.kind}">${ICON[d.kind]}</span><span class="grow"><b>${esc(d.label)}</b><small>${dueLabel(d.inDays)} · ${fmtD(d.date)}</small></span><span class="amt ${d.kind === 'income' ? 'plus' : ''}">${d.kind === 'income' ? '+' : '−'}${eur(d.amount)}</span></div>`).join('')}</div>` : ''}
+    ${nextIn ? `<p class="fsum">↑ Prochaine rentrée : <b>${esc(nextIn.label)}</b> +${eur(nextIn.amount)} · ${fmtD(nextIn.date)}</p>` : ''}
     ${passed.length ? `<p class="fsum">✓ ${passed.length} prélèvement${passed.length > 1 ? 's' : ''} déjà passé${passed.length > 1 ? 's' : ''} · ${eur(s.debited)}</p>` : ''}
     ${s.noDate.length ? `<p class="fsum">+ ${s.noDate.length} charge${s.noDate.length > 1 ? 's' : ''} sans date · ${eur(s.noDateTotal)}</p>` : ''}</section>`;
 }
@@ -309,26 +311,11 @@ function banners(st) {
   const cl = closureInfo(st);
   if (cl) b.push(`<section class="card banner accent"><div><b>Fin de ${mLong(cl.pv.y, cl.pv.m)} : ${eur(cl.left)} restants</b><small>Verse ton épargne, reporte le reste ou mets-le en cagnotte.</small></div><div class="bn-act"><button class="mini" data-act="closure" data-key="${cl.pv.key}">Choisir</button></div></section>`);
   if (backupDue(st)) b.push(`<section class="card banner"><div><b>Pense à sauvegarder tes données</b><small>${st.lastBackup ? `Dernière sauvegarde il y a ${daysSince(st.lastBackup)} jours.` : 'Aucune sauvegarde pour l’instant.'}</small></div><div class="bn-act"><button class="mini" data-act="export">Sauvegarder</button><button class="link" data-act="backup-later">Plus tard</button></div></section>`);
-  return b.slice(0, 2).join('');
+  return b.slice(0, 1).join('');   // une seule bannière à la fois : l'accueil reste lisible
 }
 
 function notes(list) {
   return `<div class="notes">${list.map(n => `<div class="note ${n.tone}"><i class="ni">${{ good: '✓', warn: '!', info: 'i' }[n.tone]}</i><p>${n.text}</p></div>`).join('')}</div>`;
-}
-/** Parts de l'anneau : la partie déjà consommée de chaque bloc est estompée, la partie restante est pleine. */
-function allocParts(al) {
-  if (al.P <= 0) return [];
-  const seg = (used, total, color) => [{ v: Math.min(used, total) / al.P, color, o: 0.42 }, { v: Math.max(0, total - used) / al.P, color }];
-  return [...seg(al.usedF, al.F, 'var(--c-fix)'), ...seg(al.usedB, al.B, 'var(--c-bud)'), ...seg(al.eroded, al.S, 'var(--c-sav)'), ...seg(al.usedR, al.R, 'var(--c-free)')];
-}
-function legendAlloc(s, al) {
-  const rows = [
-    ['var(--c-fix)', 'Prélèvements', al.F, `${eur(Math.max(0, al.F - al.usedF))} à prélever`],
-    ['var(--c-bud)', 'Budgets', al.B, `${eur(Math.max(0, al.B - al.usedB))} restants`],
-    ['var(--c-sav)', 'Épargne visée', al.S, al.eroded > 0 ? `${eur(al.eroded)} entamés` : 'versée si budget tenu'],
-    ['var(--c-free)', 'Reste libre', al.R, `${eur(Math.max(0, al.R - al.usedR))} disponibles`],
-  ].filter(r => r[2] > 0);
-  return `<p class="faded-note"><i></i>Partie estompée = déjà prélevée ou dépensée</p><div class="alloc">${rows.map(([c, l, a, sub]) => `<div class="al"><i style="background:${fill(c)}"></i><div><small>${l}</small><b>${eur(a)}</b><span>${sub}</span></div></div>`).join('')}</div>`;
 }
 /** Barre + légende des 4 parts du revenu (Bilan, récapitulatif). */
 function allocBar(s) {
@@ -379,24 +366,67 @@ function onboarding() {
 }
 
 /* ---------- Accueil ---------- */
+/** Carte principale : « combien puis-je encore dépenser ? » — un chiffre, une barre, une phrase. */
+function heroCard(s, al) {
+  const over = s.remaining < 0;
+  const end = s.isCurrent ? `d’ici le ${fmtD(s.end)}` : '';
+  const carry = s.carryIn > 0 ? ` + report ${eur(s.carryIn)}` : '';
+  const how = `<p class="how">Disponible = revenu ${eur(s.income)} − prélèvements ${eur(s.fixed)}${carry}.</p>`;
+  if (s.budget <= 0) {
+    return `<section class="card hero2"><small class="cap">À dépenser ${end}</small><div class="big neg">${eur(s.remaining)}</div>
+      <p class="sub">Tes prélèvements (${eur(s.fixed)}) dépassent tes revenus (${eur(s.income)}). Ajuste-les dans les réglages.</p></section>`;
+  }
+  const bar = stackBar([...TYPE_KEYS.map(k => ({ v: s.byType[k], color: TYPES[k].color })), ...(over ? [] : [{ v: s.remaining, color: 'transparent' }])]);
+  const perDay = !over && s.remaining > 0 && s.daysLeft
+    ? `<p class="perday">Soit environ <b>${eur(s.perDay)}</b> par jour pendant ${s.daysLeft} jour${s.daysLeft > 1 ? 's' : ''}.</p>`
+    : over ? '' : '<p class="perday">Plus rien de disponible : seulement l’essentiel !</p>';
+  let sv = '';
+  if (al.S > 0) {
+    const ok = s.remaining >= al.S, keep = s.daysLeft ? Math.max(0, s.remaining - al.S) / s.daysLeft : 0;
+    sv = ok
+      ? `<div class="note good"><i class="ni">✓</i><p>Pour garder ton épargne de <b>${eur(al.S)}</b>, dépense au plus <b>${eur(keep)}</b> par jour.</p></div>`
+      : s.remaining <= 0
+        ? `<div class="note warn"><i class="ni">!</i><p>Pas d’épargne possible ce mois-ci : ton budget est épuisé.</p></div>`
+        : `<div class="note warn"><i class="ni">!</i><p>Ton épargne de <b>${eur(al.S)}</b> est entamée : il ne reste que <b>${eur(s.remaining)}</b> de disponible.</p></div>`;
+  }
+  return `<section class="card hero2">
+    <small class="cap">${over ? 'Budget dépassé' : `Il te reste à dépenser ${end}`}</small>
+    <div class="big ${over ? 'neg' : ''}" data-count="${Math.abs(s.remaining)}">${eur(0)}</div>
+    ${over ? `<p class="sub">▲ Tu as dépensé ${eur(-s.remaining)} de plus que ce qui était disponible.</p>` : ''}
+    ${bar}
+    <div class="bar-l"><span>Dépensé <b>${eur(s.spent)}</b></span><span>Disponible <b>${eur(s.budget)}</b></span></div>
+    ${perDay}${sv}${how}
+  </section>`;
+}
+
+/** Où va le revenu : 4 parts, chacune expliquée en une phrase. */
+function incomeCard(al) {
+  if (!al.P) return '';
+  const rows = [
+    ['var(--c-fix)', 'Prélèvements', al.F, 'Loyer, abonnements… prélevés automatiquement'],
+    ['var(--c-bud)', 'Budgets', al.B, 'Tes limites par poste (courses, sorties…)'],
+    ['var(--c-sav)', 'Épargne visée', al.S, 'Mise de côté en fin de mois si tu tiens ton budget'],
+    ['var(--c-free)', 'Reste libre', al.R, 'Pour tout le reste'],
+  ].filter(r => r[2] > 0);
+  return `<section class="card"><div class="card-h"><h3>Où va ton revenu</h3><small>${eur(al.P)} ce mois-ci</small></div>
+    ${stackBar(rows.map(r => ({ v: r[2], color: r[0] })))}
+    <div class="inc">${rows.map(([c, l, v, e]) => `<div class="ir"><i style="background:${fill(c)}"></i><div class="it"><b>${l}</b><span>${e}</span></div><div class="ia"><b>${eur(v)}</b><small>${Math.round(v / al.P * 100)} %</small></div></div>`).join('')}</div></section>`;
+}
+
 function home() {
   const st = S.get(), t = now(), c = curYM();
-  const s = summary(st, c.y, c.m, t);
-  const al = allocation(s), parts = allocParts(al), over = false;
+  const s = summary(st, c.y, c.m, t), al = allocation(s);
   const date = cap(new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(t));
   return `<div class="page stagger">
     <header class="top"><div><small>${date}</small><h1>Bonjour${st.name ? ' ' + esc(st.name) : ''} 👋</h1></div><button class="icon-btn" data-act="tab" data-v="settings" aria-label="Réglages">${ICON.gear}</button></header>
     ${banners(st)}
-    <section class="card hero">
-      ${ring(parts, { over, size: 232, stroke: 15, children: `<small>${s.remaining < 0 ? 'Dépassement' : 'Reste ce mois'}</small><div class="big ${s.remaining < 0 ? 'neg' : ''}" data-count="${Math.abs(s.remaining)}">${eur(0)}</div><small>sur ${eur(Math.max(0, s.budget))}</small>` })}
-      ${legendAlloc(s, al)}
-      <p class="pace">${s.remaining > 0 ? `Tu peux dépenser <b>${eur(s.perDay)}</b> par jour · ${s.daysLeft} j restants` : s.budget <= 0 ? 'Revois tes charges dans les réglages.' : 'Budget du mois épuisé — seulement l’essentiel !'}
-        ${s.remaining > 0 && s.daysLeft && al.S > 0 ? `<br><small>ou <b>${eur(Math.max(0, s.remaining - al.S) / s.daysLeft)}</b> par jour pour garder ton épargne de ${eur(al.S)}</small>` : ''}</p>
-    </section>
+    ${heroCard(s, al)}
+    <p class="sec">Dépensé ce mois-ci, par type</p>
     <section class="types">${TYPE_KEYS.map(k => `<div class="tcard"><i style="background:${fill(TYPES[k].color)}"></i><small>${TYPES[k].label}</small><b data-count="${s.byType[k]}">${eur(0)}</b></div>`).join('')}</section>
     ${budgetsCard(s, true)}
     ${debitsCard(s)}
-    <section class="card"><div class="card-h"><h3>Notes du moment</h3></div>${notes(insights(st, s).slice(0, 3))}</section>
+    ${incomeCard(al)}
+    <section class="card"><div class="card-h"><h3>Notes du moment</h3></div>${notes(insights(st, s).slice(0, 2))}</section>
   </div>`;
 }
 
